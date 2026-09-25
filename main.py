@@ -1,0 +1,470 @@
+"""
+学术论文智能修改系统 —— 命令行入口。
+
+常用命令：
+
+    # 1) 检查 DeepSeek API 是否连通
+    python main.py --ping
+
+    # 2) 查看 Workflow 结构（Mermaid）
+    python main.py --show-graph
+
+    # 3) 全面检查并修改一篇论文（中途会停下来让你确认修改范围）
+    python main.py --file data/samples/sample_paper.md --request "全面检查并修改这篇论文"
+
+    # 4) 无人值守模式（自动批准全部问题）
+    python main.py --file data/samples/sample_paper.md --auto-approve ^
+        --constraint "不要修改实验结果" --constraint "保持作者原有表达风格"
+
+    # 5) 只改某一段（Direct Revision，跳过全文审查）
+    python main.py --text "摘要写得太啰嗦了" --request "只修改摘要，不要审查全文"
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+from app.config import get_settings
+from app.utils.llm import describe_configuration, ping
+from app.utils.loaders import DocumentLoadError, load_document
+from app.workflow.graph import build_graph, mermaid
+from app.workflow.harness import Harness
+
+
+SEVERITY_LABEL = {"high": "高", "medium": "中", "low": "低"}
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="学术论文智能修改 Multi-Agent 系统（LangGraph + DeepSeek）",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--file",
+        "-f",
+        type=str,
+        default="",
+        help="论文文件路径，支持 .docx / .pdf / .md / .txt（含空格请用引号包起来）",
+    )
+    parser.add_argument("--text", "-t", type=str, default="", help="直接传入论文文本")
+    parser.add_argument(
+        "--request",
+        "-r",
+        type=str,
+        default="请全面检查并修改这篇论文。",
+        help="用户任务描述",
+    )
+    parser.add_argument(
+        "--constraint",
+        "-c",
+        action="append",
+        default=[],
+        help="修改约束，可重复传入（例如：不要修改实验结果）",
+    )
+    parser.add_argument(
+        "--rule",
+        action="append",
+        default=[],
+        help="本轮及后续所有轮次都有效的要求，可重复传入"
+        "（例如：全文统一把“土豆”写成“马铃薯”）",
+    )
+    parser.add_argument(
+        "--auto-approve",
+        action="store_true",
+        help="自动批准全部问题（无人值守）",
+    )
+    parser.add_argument(
+        "--max-iterations", type=int, default=None, help="最大修改轮次（默认取配置）"
+    )
+    parser.add_argument("--run-id", type=str, default="", help="自定义 run_id")
+    parser.add_argument("--show-graph", action="store_true", help="打印并导出 Workflow 结构")
+    parser.add_argument(
+        "--inspect",
+        action="store_true",
+        help="只解析文件并显示结构（分区/块/噪声），不调用模型、不花钱",
+    )
+    parser.add_argument("--ping", action="store_true", help="检查 LLM 配置与连通性")
+    parser.add_argument("--quiet", "-q", action="store_true", help="减少过程日志")
+    return parser.parse_args(argv)
+
+
+def read_document(args: argparse.Namespace) -> str:
+    """读取论文内容。"""
+
+    if args.text:
+        return args.text
+
+    if args.file:
+        path = Path(args.file)
+        if not path.is_absolute():
+            path = get_settings().paths.project_root / path
+        try:
+            loaded = load_document(path)
+        except DocumentLoadError as exc:
+            raise SystemExit(f"读取论文失败：{exc}") from exc
+        print(f"[CLI] 已读取 {path.name}：{loaded.describe()}")
+        return loaded.text
+
+    default_sample = get_settings().paths.samples_dir / "sample_paper.md"
+    if default_sample.exists():
+        print(f"[CLI] 未指定论文，使用示例文件：{default_sample}")
+        return default_sample.read_text(encoding="utf-8")
+
+    raise SystemExit("请通过 --file 或 --text 提供论文内容。")
+
+
+def show_graph() -> None:
+    """打印 Workflow 结构，并保存为 workflow_graph.mmd。"""
+
+    graph = build_graph()
+    code = mermaid(graph)
+    print("\n========== GRAPH STRUCTURE ==========")
+    print(code)
+
+    output = get_settings().paths.project_root / "workflow_graph.mmd"
+    output.write_text(code, encoding="utf-8")
+    print(f"\n已保存到：{output}")
+
+
+def show_structure(document: str, name: str = "") -> None:
+    """
+    结构自检：把论文解析成什么，先给用户看清楚（不调用模型、不花钱）。
+
+    专门用来回答"我排版好的论文被读成了一团文字流"这类问题：
+    分区、块数、被跳过的噪声、前若干个块，一眼就能看出解析对不对。
+    """
+
+    from app.document.spans import (
+        ZONE_NAMES,
+        build_spans,
+        select_auditable,
+        structure_report,
+    )
+
+    spans = build_spans(document)
+    report = structure_report(spans)
+    auditable = select_auditable(spans)
+
+    print(f"\n========== 结构自检：{name} ==========")
+    print(f"字符数：{len(document)}    块数：{report['blocks']}")
+    print(
+        "分区："
+        + "，".join(
+            f"{ZONE_NAMES.get(zone, zone)} {count}"
+            for zone, count in sorted(report["zones"].items(), key=lambda item: -item[1])
+        )
+    )
+    print(
+        f"标题 {report['headings']} 个，表格 {report['tables']} 个，"
+        f"按噪声跳过 {report['skipped_noise']} 个"
+    )
+    print(f"默认送审（摘要+正文）：{len(auditable)} 块（可用 PRA_AUDIT_SCOPE=body+refs / all 调整）")
+
+    print("\n--- 前 16 个块 ---")
+    for span in spans[:16]:
+        flag = f"（跳过：{span.no_reason}）" if not span.auditable else ""
+        print(
+            f"  {span.label:5} [{ZONE_NAMES.get(span.zone, span.zone)}] {flag}"
+            f"{span.preview[:44]}"
+        )
+
+    warnings: list[str] = []
+    if report["headings"] == 0:
+        warnings.append("没有识别到任何标题：结构可能已丢失，建议改用 .docx 上传。")
+    if report["blocks"] and report["skipped_noise"] / report["blocks"] > 0.4:
+        warnings.append(
+            f"被跳过的噪声块占 {report['skipped_noise'] / report['blocks']:.0%}（目录/页码等）；"
+            "如果这是 PDF，建议改用 .docx 以保留结构。"
+        )
+    body_spans = [span for span in spans if span.zone in {"abstract", "body"} and span.auditable]
+    if body_spans:
+        average = sum(len(span.text) for span in body_spans) / len(body_spans)
+        if average < 50:
+            warnings.append(f"正文块平均只有 {average:.0f} 字符，可能是被 PDF 拆成了碎片。")
+    for warning in warnings:
+        print(f"\n⚠ {warning}")
+    if not warnings:
+        print("\n结构看起来正常：标题层级与段落边界都识别到了。")
+
+
+def ask_human(request: dict) -> dict:
+    """
+    命令行下的人机协作：展示问题清单，收集用户选择与约束。
+
+    非交互环境（stdin 不可用）时自动批准全部问题。
+    """
+
+    issues = request.get("issues") or []
+    print("\n========== 需要你确认的修改范围 ==========")
+    for issue in issues:
+        severity = SEVERITY_LABEL.get(issue.get("severity", ""), issue.get("severity", ""))
+        print(
+            f"[{issue.get('id')}] ({severity} / {issue.get('category')}) "
+            f"{issue.get('problem')}"
+        )
+        if issue.get("location"):
+            print(f"      位置：{issue['location']}")
+        if issue.get("suggestion"):
+            print(f"      建议：{issue['suggestion']}")
+
+    try:
+        raw_ids = input(
+            "\n请输入要修改的问题编号（逗号分隔；直接回车=全部；none=都不修改）："
+        ).strip()
+        raw_constraints = input(
+            "请输入修改约束（多条用分号分隔，可留空）："
+        ).strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\n[CLI] 无法读取输入，自动批准全部问题。")
+        return {
+            "decision": "approve",
+            "approved_issue_ids": "all",
+            "constraints": [],
+            "feedback": "（非交互环境自动批准）",
+        }
+
+    if raw_ids.lower() in {"none", "不修改", "无"}:
+        approved: object = []
+    elif not raw_ids:
+        approved = "all"
+    else:
+        approved = raw_ids
+
+    constraints = [
+        piece.strip()
+        for piece in raw_constraints.replace("；", ";").split(";")
+        if piece.strip()
+    ]
+
+    return {
+        "decision": "approve" if approved != [] else "reject",
+        "approved_issue_ids": approved,
+        "constraints": constraints,
+        "feedback": "",
+    }
+
+
+def ask_patches(request: dict) -> dict:
+    """
+    补丁审阅（默认也是唯一的人工环节）：
+    一次性列出本轮全部改动，每条形如
+
+        [patch-001] P03（第 2 句）｜语言表达（中）
+          修改前：……
+          修改后：……
+          理由：……            <- Agent 写好的，用户不用写
+
+    用户只需要说“要哪些”：回车=全部接受，none=全部拒绝，或输入编号。
+    """
+
+    patches = request.get("patches") or []
+    decidable = [patch for patch in patches if patch.get("status") == "proposed"]
+
+    print("\n========== 本轮改动清单 ==========")
+    print(request.get("summary", ""))
+    for patch in patches:
+        position = patch.get("position") or patch.get("span_label") or patch.get("span_id")
+        label = patch.get("status_label") or patch.get("status")
+        print(
+            f"\n[{patch.get('patch_id')}] {position}"
+            f"｜{patch.get('category', '')}（{SEVERITY_LABEL.get(patch.get('severity', ''), patch.get('severity', ''))}）"
+            f"｜{label}"
+        )
+        if patch.get("before"):
+            print(f"    修改前：{patch['before']}")
+        if patch.get("replace"):
+            print(f"    修改后：{patch['replace']}")
+        print(f"    理由：{patch.get('rationale') or '（未提供）'}")
+        if patch.get("conflict_reason"):
+            print(f"    无法定位：{patch['conflict_reason']}")
+        for warning in patch.get("warnings") or []:
+            print(f"    提示：{warning}")
+
+    if not decidable:
+        print("\n本轮没有可以接受的改动。")
+        return {"reject_all": True}
+
+    print("\n可接受的编号：" + "、".join(f"{i + 1}" for i in range(len(decidable))))
+    try:
+        raw = input("要接受哪些？（回车=全部接受；none=全部拒绝；也可输入 1,3）：").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\n[CLI] 无法读取输入，默认全部接受。")
+        return {"accept_all": True}
+
+    if raw.lower() in {"none", "不", "都不要"}:
+        return {"reject_all": True}
+    if not raw:
+        return {"accept_all": True}
+
+    wanted: list[str] = []
+    for piece in raw.replace("，", ",").split(","):
+        piece = piece.strip()
+        if piece.isdigit():
+            index = int(piece) - 1
+            if 0 <= index < len(decidable):
+                wanted.append(str(decidable[index].get("patch_id")))
+        elif piece:
+            wanted.append(piece)  # 也允许直接写 patch-003
+    return {"accepted_ids": wanted}
+
+
+def ask_issues(request: dict) -> dict:
+    """
+    Audit 之后的问题闸门：逐条列出问题，问用户有没有要忽略的。
+
+    默认都要改（直接回车继续）；被忽略的问题会被持久记下来，
+    多轮对话里不会再问一次。
+    """
+
+    issues = request.get("issues") or []
+    print("\n========== 审查发现的问题 ==========")
+    for issue in issues:
+        severity = SEVERITY_LABEL.get(issue.get("severity", ""), issue.get("severity", ""))
+        print(
+            f"[{issue.get('id')}] {issue.get('span_label') or issue.get('location') or ''}"
+            f"（{severity}｜{issue.get('category')}）{issue.get('problem')}"
+        )
+        if issue.get("suggestion"):
+            print(f"      建议：{issue['suggestion']}")
+
+    remembered = request.get("remembered") or []
+    if remembered:
+        print("\n你已经确认过不修改的（本轮不再问）：")
+        for rule in remembered:
+            print(f"  [{rule.get('id')}] {rule.get('text')}")
+
+    try:
+        raw = input(
+            "\n有没有要忽略的？(回车=都要改；none=全部不改；也可输入 2,4)："
+        ).strip()
+        rules_text = input(
+            "要补充的要求吗？例如“全文统一把土豆写成马铃薯”（可留空）："
+        ).strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\n[CLI] 无法读取输入，默认全部都要改。")
+        return {"ignore_ids": [], "rules": []}
+
+    payload: dict = {
+        "rules": [rules_text] if rules_text else [],
+        "turn": request.get("turn"),
+    }
+    if raw.lower() in {"none", "全部", "都不要", "全不改"}:
+        payload["ignore_all"] = True
+    elif raw:
+        payload["ignore_ids"] = [
+            piece.strip() for piece in raw.replace("，", ",").split(",") if piece.strip()
+        ]
+    else:
+        payload["ignore_ids"] = []
+    return payload
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+
+    if args.ping:
+        print("当前 LLM 配置：")
+        for key, value in describe_configuration().items():
+            print(f"  {key}: {value}")
+        response = ping()
+        print(f"\n连通性检查：OK\n模型返回：{response.text.strip()[:200]}")
+        return 0
+
+    if args.show_graph:
+        show_graph()
+        return 0
+
+    if args.inspect:
+        document = read_document(args)
+        show_structure(document, args.file or "（命令行文本）")
+        return 0
+
+    document = read_document(args)
+    if not document.strip():
+        raise SystemExit("论文内容为空。")
+
+    logger = None if args.quiet else print
+    harness = Harness(
+        auto_approve=args.auto_approve,
+        auto_approve_constraints=args.constraint,
+        logger=logger,
+    )
+
+    if args.auto_approve:
+        result = harness.run_to_completion(
+            args.request,
+            document,
+            run_id=args.run_id or None,
+            max_iterations=args.max_iterations,
+        )
+    else:
+        result = harness.start(
+            args.request,
+            document,
+            run_id=args.run_id or None,
+            max_iterations=args.max_iterations,
+            rules=args.rule,
+        )
+        rounds = 0
+        while result.is_interrupted and rounds < 10:
+            rounds += 1
+            request = result.pending_request
+            if request.get("type") == "patch_review":
+                payload = ask_patches(request)
+                payload["turn"] = request.get("turn")
+            elif request.get("type") == "issue_review":
+                payload = ask_issues(request)
+            else:
+                payload = ask_human(request)
+                payload["iteration"] = request.get("iteration")
+            result = harness.resume(payload)
+
+        # 多轮会话：这轮结束后还可以继续提要求（例如“把摘要再学术一点”）
+        turns = 0
+        while result.status == "completed" and turns < 5:
+            try:
+                follow_up = input(
+                    "\n还想继续提要求吗？（例如：把摘要再学术一点；直接回车结束）："
+                ).strip()
+            except (EOFError, KeyboardInterrupt):
+                break
+            if not follow_up:
+                break
+            turns += 1
+            # 支持在追问里改要求：记住：…… / R1 改成 …… / 取消 R1
+            result = harness.follow_up(follow_up)
+            while result.is_interrupted:
+                request = result.pending_request
+                if request.get("type") == "patch_review":
+                    payload = ask_patches(request)
+                elif request.get("type") == "issue_review":
+                    payload = ask_issues(request)
+                else:
+                    payload = ask_human(request)
+                result = harness.resume(payload)
+
+    print("\n========== 运行摘要 ==========")
+    for key, value in result.summary().items():
+        print(f"  {key}: {value}")
+
+    if result.status == "failed":
+        print(f"\n运行失败：{result.error}")
+        return 1
+
+    print("\n========== 最终报告 ==========")
+    print(result.final_report)
+
+    trace = harness.trace_summary()
+    print("========== Trace 汇总 ==========")
+    print(f"  调用次数：{trace['totals']['calls']}")
+    print(f"  失败次数：{trace['totals']['failures']}")
+    print(f"  重试次数：{trace['totals']['retries']}")
+    print(f"  总耗时：{trace['totals']['total_ms']} ms")
+    print(f"  Token 总量：{trace['totals']['total_tokens']}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

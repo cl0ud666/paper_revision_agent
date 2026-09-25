@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+.venv/
+
+# Environment variables
+.env
+
+# IDE
+.idea/
+
+# Test / cache
+.pytest_cache/
+
+# Logs
+*.log
+
+# 运行产物（报告、Trace、评测结果）
+data/runs/
+
+# Checkpoint 数据库
+data/checkpoints/
+*.sqlite

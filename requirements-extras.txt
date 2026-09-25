@@ -1,0 +1,23 @@
+# Optional dependencies (not installed yet, need network).
+#
+#   pip install -r requirements-extras.txt
+#
+# NOTE: keep this file ASCII-only. pip reads requirements files with the
+# system locale encoding (GBK on Chinese Windows), so non-ASCII comments
+# cause "UnicodeDecodeError: 'gbk' codec can't decode byte".
+
+# GUI
+streamlit>=1.30
+
+# Cross-process checkpoint (resume a paused task in a new process)
+langgraph-checkpoint-sqlite>=2.0
+
+# Tests (the suite uses the standard library unittest; pytest is optional)
+pytest>=8.0
+
+# File parsing for command line / GUI upload:
+#   .docx -> python-docx (fallback: built-in zipfile+xml parser, no dependency)
+#   .pdf  -> pypdf (fallback: pdfplumber)
+python-docx>=1.0
+pypdf>=4.0
+pdfplumber>=0.11

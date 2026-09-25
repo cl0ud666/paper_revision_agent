@@ -1,0 +1,36 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	orchestrator(orchestrator)
+	audit(audit)
+	human_approval(human_approval)
+	revision(revision)
+	patch_review(patch_review)
+	apply(apply)
+	review(review)
+	report(report)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> orchestrator;
+	apply --> review;
+	audit -.-> human_approval;
+	audit -.-> report;
+	audit -.-> revision;
+	human_approval -.-> report;
+	human_approval -.-> revision;
+	orchestrator -.-> audit;
+	orchestrator -.-> human_approval;
+	orchestrator -.-> report;
+	orchestrator -.-> revision;
+	patch_review -.-> apply;
+	patch_review -.-> report;
+	review -.-> orchestrator;
+	review -.-> report;
+	revision --> patch_review;
+	report --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc

@@ -1,0 +1,8 @@
+# Web deployment dependencies (FastAPI backend + SSE progress + durable checkpoints).
+# NOTE: keep this file ASCII-only: pip reads requirements files with the system
+# locale encoding (GBK on Chinese Windows), and non-ASCII comments break it.
+
+fastapi>=0.115
+uvicorn[standard]>=0.30
+langgraph-checkpoint-sqlite>=2.0
+python-multipart>=0.0.9
