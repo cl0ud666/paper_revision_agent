@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 from app.config import get_settings
 from app.utils.llm import describe_configuration, ping
@@ -90,11 +91,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def read_document(args: argparse.Namespace) -> str:
-    """读取论文内容。"""
+def read_input(args: argparse.Namespace) -> tuple[str, Any]:
+    """读取论文内容，并尽量带上"文件加载结果"（含能否写回 Word）。"""
 
     if args.text:
-        return args.text
+        return args.text, None
 
     if args.file:
         path = Path(args.file)
@@ -105,14 +106,38 @@ def read_document(args: argparse.Namespace) -> str:
         except DocumentLoadError as exc:
             raise SystemExit(f"读取论文失败：{exc}") from exc
         print(f"[CLI] 已读取 {path.name}：{loaded.describe()}")
-        return loaded.text
+        return loaded.text, loaded
 
     default_sample = get_settings().paths.samples_dir / "sample_paper.md"
     if default_sample.exists():
         print(f"[CLI] 未指定论文，使用示例文件：{default_sample}")
-        return default_sample.read_text(encoding="utf-8")
+        return default_sample.read_text(encoding="utf-8"), None
 
     raise SystemExit("请通过 --file 或 --text 提供论文内容。")
+
+
+def read_document(args: argparse.Namespace) -> str:
+    """读取论文内容（只要文字）。"""
+
+    return read_input(args)[0]
+
+
+def source_docx_path(args: argparse.Namespace) -> str:
+    """
+    原始 .docx 的路径（用于把改动写回 Word）。
+
+    只有"从文件读的 Word"才有这条路径：改完会在 data/runs/<run_id>/
+    另存一份带修订痕迹的 revised_document.docx，原文件不动。
+    """
+
+    if not args.file or args.text:
+        return ""
+    path = Path(args.file)
+    if not path.is_absolute():
+        path = get_settings().paths.project_root / path
+    if path.suffix.lower() == ".docx" and path.exists():
+        return str(path)
+    return ""
 
 
 def show_graph() -> None:
@@ -128,7 +153,7 @@ def show_graph() -> None:
     print(f"\n已保存到：{output}")
 
 
-def show_structure(document: str, name: str = "") -> None:
+def show_structure(document: str, name: str = "", *, loaded: Any = None) -> None:
     """
     结构自检：把论文解析成什么，先给用户看清楚（不调用模型、不花钱）。
 
@@ -161,6 +186,17 @@ def show_structure(document: str, name: str = "") -> None:
         f"按噪声跳过 {report['skipped_noise']} 个"
     )
     print(f"默认送审（摘要+正文）：{len(auditable)} 块（可用 PRA_AUDIT_SCOPE=body+refs / all 调整）")
+
+    stats = getattr(loaded, "docx_stats", None) or {}
+    if getattr(loaded, "can_write_back", False):
+        print(
+            "写回 Word：可用"
+            f"（可编辑块 {stats.get('writable_blocks', '-')}/{stats.get('blocks', '-')}，"
+            f"含公式的块 {stats.get('with_formula', 0)}，含图片的块 {stats.get('with_object', 0)}）"
+            "；改动会以 Word 修订痕迹 + 批注写回副本，原文件不动"
+        )
+    elif loaded is not None and loaded.format == "docx":
+        print("写回 Word：不可用（没装 lxml，只能输出 Markdown）")
 
     print("\n--- 前 16 个块 ---")
     for span in spans[:16]:
@@ -377,8 +413,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.inspect:
-        document = read_document(args)
-        show_structure(document, args.file or "（命令行文本）")
+        document, loaded = read_input(args)
+        show_structure(document, args.file or "（命令行文本）", loaded=loaded)
         return 0
 
     document = read_document(args)
@@ -391,6 +427,9 @@ def main(argv: list[str] | None = None) -> int:
         auto_approve_constraints=args.constraint,
         logger=logger,
     )
+    source_docx = source_docx_path(args)
+    if source_docx:
+        print(f"[CLI] 改动会写回 Word 副本（保留原文件）：{Path(source_docx).name}")
 
     if args.auto_approve:
         result = harness.run_to_completion(
@@ -398,6 +437,7 @@ def main(argv: list[str] | None = None) -> int:
             document,
             run_id=args.run_id or None,
             max_iterations=args.max_iterations,
+            source_docx=source_docx,
         )
     else:
         result = harness.start(
@@ -406,6 +446,7 @@ def main(argv: list[str] | None = None) -> int:
             run_id=args.run_id or None,
             max_iterations=args.max_iterations,
             rules=args.rule,
+            source_docx=source_docx,
         )
         rounds = 0
         while result.is_interrupted and rounds < 10:
@@ -455,6 +496,10 @@ def main(argv: list[str] | None = None) -> int:
 
     print("\n========== 最终报告 ==========")
     print(result.final_report)
+
+    if result.docx_path:
+        print("\n========== Word 副本（可直接在 Word/WPS 里接受或拒绝）==========")
+        print(f"  {result.docx_path}")
 
     trace = harness.trace_summary()
     print("========== Trace 汇总 ==========")

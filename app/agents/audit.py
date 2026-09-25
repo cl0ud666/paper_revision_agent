@@ -31,6 +31,13 @@ from app.document.spans import (
 )
 from app.state.schema import ISSUE_CATEGORIES, SEVERITY_ORDER
 from app.utils.budget import BudgetExceeded, check, exceeded_snapshot, usage
+from app.utils.consistency import (
+    describe_entity_check,
+    describe_naming_variants,
+    find_cross_section_gaps,
+    find_naming_variants,
+    find_near_miss_names,
+)
 from app.utils.context import build_context, format_context
 from app.utils.json_utils import parse_json_object
 from app.utils.llm import call_llm
@@ -40,6 +47,45 @@ from app.utils.text import locate_section, normalize_whitespace, similarity
 
 SEVERITIES = ("high", "medium", "low")
 SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2}
+
+
+def _consistency_hint(
+    chunk_labels: set[str],
+    *,
+    naming: list[dict[str, Any]],
+    gaps: list[dict[str, Any]],
+    near_misses: list[dict[str, Any]],
+) -> str:
+    """
+    只挑"与本批次有关"的一致性线索放进上下文。
+
+    全量塞进去有两个坏处：占掉审查正文的预算；同一个词会被每批评一次。
+    所以三类线索都按"是否出现在本批次"过滤。
+    """
+
+    def relevant(labels: list[str]) -> bool:
+        return any(label in chunk_labels for label in labels)
+
+    relevant_naming = [
+        item
+        for item in naming
+        if relevant([label for labels in (item.get("variants") or {}).values() for label in labels])
+    ]
+    relevant_gaps = [item for item in gaps if relevant(list(item.get("labels") or []))]
+    relevant_misses = [
+        item
+        for item in near_misses
+        if relevant(list(item.get("suspected_labels") or []))
+        or relevant(list(item.get("likely_labels") or []))
+    ]
+
+    sections: list[str] = []
+    naming_text = describe_naming_variants(relevant_naming)
+    if naming_text:
+        sections.append(naming_text)
+    sections.extend(describe_entity_check(relevant_gaps, relevant_misses))
+    return "\n\n".join(sections)
+
 
 # 证据必须能在段落里逐字找到，且不能太短（太短容易"碰巧命中"）
 MIN_EVIDENCE_CHARS = 8
@@ -75,17 +121,33 @@ def run(
     spans = build_spans(document, version=version)
     scope = state.get("audit_scope") or settings.workflow.audit_scope
     auditable = select_auditable(spans, scope) or spans
-    chunks = chunk_spans(
+    # 先按段落切够，再按上限取：这样"因为太长而没审到"是可以被说出来的
+    all_chunks = chunk_spans(
         auditable,
         max_tokens=settings.context.audit_chunk_tokens,
-        max_chunks=settings.context.audit_max_chunks,
+        max_chunks=None,
     )
+    max_chunks = settings.context.audit_max_chunks
+    chunks = all_chunks[:max_chunks] if max_chunks else all_chunks
+    dropped_chunks = len(all_chunks) - len(chunks)
+
+    # 确定性一致性检查（不吃"批次运气"）：写法不统一 / 只在总结里出现 / 疑似拼错
+    naming_hint = find_naming_variants(auditable)
+    section_gaps = find_cross_section_gaps(auditable)
+    near_misses = find_near_miss_names(auditable)
+
     structure = structure_report(spans)
     log(
         f"[Audit] 文档共 {structure['blocks']} 块；按范围「{scope}」送审 "
         f"{len(auditable)} 块，分 {len(chunks)} 批"
         f"（跳过封面/目录/致谢等 {structure['blocks'] - len(auditable)} 块）。"
     )
+    if dropped_chunks:
+        log(
+            f"[Audit] 注意：受上限 PRA_AUDIT_MAX_CHUNKS={max_chunks} 限制，"
+            f"后面 {dropped_chunks} 批没有审到（整篇共 {len(all_chunks)} 批）。"
+            "需要审全文请调大 PRA_AUDIT_MAX_CHUNKS 或 PRA_AUDIT_CHUNK_TOKENS。"
+        )
 
     guard = get_guard("audit", on_event=log)
     raw_issues: list[dict[str, Any]] = []
@@ -103,6 +165,13 @@ def run(
             break
 
         chunk_text = render_annotated(chunk)
+        chunk_labels = {span.label for span in chunk}
+        consistency_hint = _consistency_hint(
+            chunk_labels,
+            naming=naming_hint,
+            gaps=section_gaps,
+            near_misses=near_misses,
+        )
         fields = build_context(
             state,
             "audit",
@@ -111,6 +180,7 @@ def run(
                 "chunk_total": len(chunks),
                 "chunk_text": chunk_text,
                 "chunk_labels": [span.label for span in chunk],
+                "consistency_check": consistency_hint,
             },
         )
         prompt = render_audit_prompt(format_context(fields))
@@ -174,6 +244,9 @@ def run(
         "blocks": len(spans),
         "scope": scope,
         "auditable_blocks": len(auditable),
+        "chunks_total": len(all_chunks),
+        "chunks_dropped": dropped_chunks,
+        "naming_variants": len(naming_hint),
         "zones": structure["zones"],
         "skipped_noise": structure["skipped_noise"],
         "budget_stopped": budget_stopped,

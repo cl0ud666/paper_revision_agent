@@ -24,6 +24,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from app.document.docx_model import (
+    DocxSource,
+    DocxUnavailable,
+    paragraph_to_markdown,
+    style_id_to_name,
+)
+from app.utils.text import normalize_document_text
+
 # 按“最可能是对的”顺序试：UTF-8 系列 -> 中文 GB 系列 -> Big5 -> 兜底
 _ENCODINGS = ("utf-8-sig", "utf-8", "gb18030", "big5", "latin-1")
 
@@ -51,6 +59,9 @@ class LoadedDocument:
     format: str = ""
     encoding: str = ""
     warnings: list[str] = field(default_factory=list)
+    # 是否拿到了"文字 ↔ Word XML"的对应关系（能直接把改动写回原文件）
+    can_write_back: bool = False
+    docx_stats: dict[str, Any] = field(default_factory=dict)
 
     @property
     def chars(self) -> int:
@@ -67,6 +78,8 @@ class LoadedDocument:
         parts.append(f"{self.chars} 字符")
         parts.append(f"{self.paragraphs} 段")
         text = "，".join(parts)
+        if self.can_write_back:
+            text += "（可直接把改动写回 Word 原文件）"
         if self.warnings:
             text += "\n提示：" + "；".join(self.warnings)
         return text
@@ -144,15 +157,45 @@ def _looks_like_docx(data: bytes) -> bool:
 
 
 def _load_docx(data: bytes, filename: str) -> LoadedDocument:
+    """
+    读取 .docx。
+
+    优先走 :class:`DocxSource`（结构化读取）：它除了文字，还会记下
+    "每段文字在 document.xml 里对应哪个节点、从第几个字到第几个字"，
+    有了这个对应关系，改完才能直接把改动写回 Word 原文件（保留版式、
+    图表、公式、编号）。
+
+    读不到结构时（例如没装 lxml）退回纯文字解析：改还是能改，
+    但产物只能是文字，不能回写。
+    """
+
     warnings: list[str] = []
     text = ""
+    can_write_back = False
+    stats: dict[str, Any] = {}
 
     try:
-        text = _docx_text_python_docx(data)
-    except ImportError:
-        warnings.append("未安装 python-docx，已用内置解析器读取（格式还原略简单）。")
-    except Exception as exc:  # noqa: BLE001 - 退回内置解析器
-        warnings.append(f"python-docx 解析失败（{exc}），改用内置解析器。")
+        source = DocxSource(data)
+        text = source.text
+        stats = source.describe()
+        can_write_back = True
+        warnings.extend(source.warnings)
+    except DocxUnavailable:
+        warnings.append(
+            "未安装 lxml，已用内置解析器读取：文字照样能改，"
+            "但没法把改动写回 Word 原文件（想要修订痕迹 + 批注请先 "
+            "pip install python-docx，或单独 pip install lxml）。"
+        )
+    except Exception as exc:  # noqa: BLE001 - 结构解析失败不该拖垮读取
+        warnings.append(f"结构化解析失败（{exc}），改用内置解析器读取。")
+
+    if not text.strip():
+        try:
+            text = _docx_text_python_docx(data)
+        except ImportError:
+            warnings.append("未安装 python-docx，已用内置解析器读取（格式还原略简单）。")
+        except Exception as exc:  # noqa: BLE001 - 退回内置解析器
+            warnings.append(f"python-docx 解析失败（{exc}），改用内置解析器。")
 
     if not text.strip():
         text = _docx_text_stdlib(data)
@@ -167,6 +210,8 @@ def _load_docx(data: bytes, filename: str) -> LoadedDocument:
         source=filename,
         format="docx",
         warnings=warnings,
+        can_write_back=can_write_back,
+        docx_stats=stats,
     )
 
 
@@ -247,24 +292,14 @@ def _style_name(paragraph: Any) -> str:
         return ""
 
 
-_HEADING_RE = re.compile(r"(?:heading|标题)\s*([1-9])", re.IGNORECASE)
-
-
 def _paragraph_to_markdown(text: str, style: str) -> str:
-    """把 Word 段落样式映射成 Markdown（下游靠这些标记切块）。"""
+    """把 Word 段落样式映射成 Markdown（下游靠这些标记切块）。
 
-    name = style.strip()
-    lowered = name.lower()
+    规则只在 :mod:`app.document.docx_model` 里维护一份：
+    读文件和回写 Word 必须用同一套映射，否则偏移对不上。
+    """
 
-    match = _HEADING_RE.search(name)
-    if match:
-        level = int(match.group(1))
-        return f"{'#' * min(level, 6)} {text}"
-    if "title" in lowered or name in {"标题", "题目"}:
-        return f"# {text}"
-    if "list" in lowered or name in {"列表段落", "列表"}:
-        return f"- {text}"
-    return text
+    return paragraph_to_markdown(text, style)
 
 
 def _rows_to_markdown_table(rows: list[list[str]]) -> str:
@@ -322,14 +357,7 @@ def _docx_text_stdlib(data: bytes) -> str:
 def _style_to_name(style_id: str) -> str:
     """docx 里的 pStyle 是样式 ID（Heading1），转成可读名字。"""
 
-    match = re.match(r"^[Hh]eading([1-9])$", style_id)
-    if match:
-        return f"Heading {match.group(1)}"
-    if style_id in {"Title", "标题"}:
-        return "Title"
-    if style_id.startswith("List"):
-        return "List Paragraph"
-    return style_id
+    return style_id_to_name(style_id)
 
 
 # ---------------------------------------------------------------- PDF
@@ -423,10 +451,7 @@ def _join_pdf_pages(pages: list[str]) -> str:
 def _normalize(text: str) -> str:
     """统一换行、去掉行尾空白、压掉过多空行。"""
 
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = "\n".join(line.rstrip() for line in text.split("\n"))
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip() + "\n"
+    return normalize_document_text(text)
 
 
 def supported_extensions() -> str:

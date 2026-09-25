@@ -74,6 +74,12 @@ class RunResult:
     def document_path(self) -> str:
         return self.state.get("document_path", "") or ""
 
+    @property
+    def docx_path(self) -> str:
+        """带 Word 修订痕迹与批注的副本（上传 .docx 时才有）。"""
+
+        return self.state.get("docx_path", "") or ""
+
     def summary(self) -> dict[str, Any]:
         """给 UI / CLI 用的精简摘要。"""
 
@@ -91,6 +97,7 @@ class RunResult:
             "review": self.review_status,
             "report_path": self.report_path,
             "document_path": self.document_path,
+            "docx_path": self.docx_path,
         }
 
 
@@ -135,8 +142,14 @@ class Harness:
         run_id: str | None = None,
         max_iterations: int | None = None,
         rules: list[str] | None = None,
+        source_docx: str = "",
     ) -> RunResult:
-        """开始一次新任务。"""
+        """
+        开始一次新任务。
+
+        :param source_docx: 原始 .docx 的路径。给了它，改完就能把改动
+            以 Word 修订痕迹写回一份副本（另存，不动原文件）。
+        """
 
         self.run_id = run_id or new_run_id()
         # 只清掉这个 run_id 的旧统计；不要动其它正在运行的任务
@@ -148,6 +161,7 @@ class Harness:
             run_id=self.run_id,
             max_iterations=max_iterations or self.settings.workflow.max_iterations,
         )
+        state["source_docx"] = source_docx or ""
         # 第一轮也记进 turns，这样多轮上下文从第一轮就是完整的
         state["turns"] = [
             {
@@ -294,6 +308,7 @@ class Harness:
         *,
         run_id: str | None = None,
         max_iterations: int | None = None,
+        source_docx: str = "",
     ) -> RunResult:
         """
         一路跑到结束（遇到人工节点时自动批准）。
@@ -302,7 +317,11 @@ class Harness:
         """
 
         result = self.start(
-            user_request, document, run_id=run_id, max_iterations=max_iterations
+            user_request,
+            document,
+            run_id=run_id,
+            max_iterations=max_iterations,
+            source_docx=source_docx,
         )
         guard = 0
         while result.is_interrupted and guard < 10:

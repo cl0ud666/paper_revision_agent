@@ -1,5 +1,11 @@
-"""文档模型层：可寻址的段落切分（span）与补丁（patch）。"""
+"""文档模型层：可寻址的段落切分（span）、补丁（patch）与 Word 回写。"""
 
+from app.document.docx_model import DocxBlock, DocxSource, Piece
+from app.document.docx_redline import (
+    RedlineOutcome,
+    applied_rounds,
+    export_redline,
+)
 from app.document.patches import (
     Patch,
     apply_patches,
@@ -19,10 +25,16 @@ from app.document.spans import (
 )
 
 __all__ = [
+    "DocxBlock",
+    "DocxSource",
     "Patch",
+    "Piece",
+    "RedlineOutcome",
     "Span",
+    "applied_rounds",
     "apply_patches",
     "build_spans",
+    "export_redline",
     "index_summary",
     "next_patch_id",
     "patch_from_model",

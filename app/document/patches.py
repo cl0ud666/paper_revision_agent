@@ -199,6 +199,9 @@ def validate_patch(patch: Patch, spans: Iterable[Span]) -> Patch:
     patch.span_id = span.id
     patch.span_label = span.label
 
+    # 排版标记（### / - / |）不是正文：模型抄进来的、自己加的，一律剥掉
+    normalize_structure_markers(patch, span)
+
     if not (patch.replace or "").strip() and not patch.delete:
         return _conflict(patch, "empty_replace")
 
@@ -260,6 +263,61 @@ def _conflict(patch: Patch, reason: str) -> Patch:
 
 
 _SENTENCE_MARKER_RE = re.compile(r"(?:^|(?<=[。！？；.!?;]))\s*\((\d{1,2})\)\s*")
+
+# Markdown 结构标记：标题的 #、列表的 -、表格的 |
+# 它们是**排版结构**，由文档结构保留，不属于正文内容。
+_LEADING_MARKER_RE = re.compile(r"^(#{1,6}[ \t]+|[-*+][ \t]+)")
+
+
+def _leading_marker(text: str) -> str:
+    match = _LEADING_MARKER_RE.match(text or "")
+    return match.group(0) if match else ""
+
+
+def normalize_structure_markers(patch: Patch, span: Span) -> Patch:
+    """
+    把"排版标记"从补丁内容里剥掉。
+
+    为什么必须做：送审文本里的 ``### 3.3.5 对比损失函数优化`` ，
+    前面的 ``###`` 是**我们为了保留标题层级加的**，原文件里并不存在这段字符。
+    模型很容易把它当成正文的一部分抄进 quote / replace，结果就是：
+
+    - 标题变成 ``### ### 3.3.5 …``（标记重复）；
+    - 或者补丁清单里显示"把 3.3.5 改成了 ### 3.3.5"，让用户以为正文多出了 ###；
+    - 写回 Word 时，``###`` 会变成标题段落里真实的字符。
+
+    处理方式：标记由结构保留，补丁只负责**文字本身**。剥掉之后记一条 warning，
+    用户能在补丁清单里看到"已去掉模型回抄的排版标记"。
+    """
+
+    span_marker = _leading_marker(span.text)
+
+    quote = patch.quote or ""
+    if span_marker and quote.startswith(span_marker):
+        patch.quote = quote[len(span_marker) :]
+        patch.warnings.append("已去掉“修改前”回抄的排版标记")
+
+    replace = patch.replace or ""
+    if replace:
+        marker = _leading_marker(replace)
+        if marker:
+            patch.replace = replace[len(marker) :]
+            patch.warnings.append(
+                "已去掉“修改后”开头的排版标记（标题层级由文档结构保留）"
+            )
+        replace = patch.replace
+
+    if span.kind == "table" and replace:
+        cleaned = replace.strip()
+        if cleaned.startswith("|"):
+            cleaned = cleaned[1:].lstrip()
+        if cleaned.endswith("|"):
+            cleaned = cleaned[:-1].rstrip()
+        if cleaned != replace:
+            patch.replace = cleaned
+            patch.warnings.append("已去掉“修改后”两侧的表格竖线")
+
+    return patch
 
 
 def strip_sentence_markers(text: str) -> str:

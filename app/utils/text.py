@@ -11,6 +11,20 @@ import math
 import re
 from dataclasses import dataclass
 
+
+def normalize_document_text(text: str) -> str:
+    """
+    归一化整篇文档的换行与空白。
+
+    这是"读文件"与"写回 Word"共用的一份规则：
+    两边必须逐字节一致，段落偏移才能对上原文件里的文字。
+    """
+
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = "\n".join(line.rstrip() for line in text.split("\n"))
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip() + "\n"
+
 # 中日韩文字（粗略范围，足够做 Token 估算）
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff]")
 _WHITESPACE_RE = re.compile(r"\s+")

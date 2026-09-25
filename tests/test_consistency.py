@@ -21,6 +21,12 @@ from app.document.patches import (
 )
 from app.document.spans import build_spans
 from app.utils.consistency import (
+    describe_entity_check,
+    describe_naming_variants,
+    find_cross_section_gaps,
+    find_naming_variants,
+    find_near_miss_names,
+    find_structure_damage,
     find_inconsistencies,
     term_mappings_from_patches,
     term_mappings_from_rules,
@@ -228,6 +234,194 @@ class TestDeletePatch(unittest.TestCase):
         validate_patch(patch, self.spans)
         self.assertEqual(patch.status, "conflict")
         self.assertIn("delete", patch.conflict_reason)
+
+
+class TestProperNounVariants(unittest.TestCase):
+    """
+    专有名词写法检查（确定性，不调用模型）。
+
+    模型一次只看一段，而"同一个词写了两种样子"是**全文属性**；
+    这里先把证据摆出来，模型再据此写成一条有据可依的问题。
+    """
+
+    def spans(self, *paragraphs):
+        return build_spans("\n\n".join(paragraphs) + "\n")
+
+    def test_same_name_written_two_ways_is_detected(self):
+        spans = self.spans("我们在 PubMed 上做了实验。", "同时在 Pubmed 上也做了对比。")
+        items = find_naming_variants(spans)
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(sorted(items[0]["variants"]), ["PubMed", "Pubmed"])
+        self.assertEqual(items[0]["variants"]["PubMed"], ["P01"])
+        self.assertEqual(items[0]["variants"]["Pubmed"], ["P02"])
+
+    def test_hyphen_variant_is_detected(self):
+        spans = self.spans("GraphSAGE 的效果很好。", "Graph-SAGE 也被比较过。")
+        items = find_naming_variants(spans)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(sorted(items[0]["variants"]), ["Graph-SAGE", "GraphSAGE"])
+
+    def test_sentence_initial_capital_is_not_reported(self):
+        """普通英文词的句首大写不算"写法不一致"，否则满篇误报。"""
+
+        spans = self.spans("We propose a method.", "we also compare it with baselines.")
+        self.assertEqual(find_naming_variants(spans), [])
+
+    def test_single_writing_is_not_reported(self):
+        spans = self.spans("PubMed 是我们用的数据集。")
+        self.assertEqual(find_naming_variants(spans), [])
+
+    def test_description_names_every_form_and_paragraph(self):
+        spans = self.spans("我们在 PubMed 上做了实验。", "同时在 Pubmed 上也做了对比。")
+        text = describe_naming_variants(find_naming_variants(spans))
+        self.assertIn("PubMed", text)
+        self.assertIn("Pubmed", text)
+        self.assertIn("P01", text)
+        self.assertIn("P02", text)
+
+    def test_audit_context_carries_the_hint(self):
+        from app.utils.context import build_context
+
+        fields = build_context(
+            {},
+            "audit",
+            extra={"consistency_check": "- 同一个词写作：「PubMed」（P01） / 「Pubmed」（P02）"},
+        )
+        self.assertIn("consistency_check", fields)
+        self.assertIn("确定性扫描", fields["consistency_check"])
+        self.assertIn("PubMed", fields["consistency_check"])
+
+    def test_audit_context_omits_the_hint_when_nothing_found(self):
+        from app.utils.context import build_context
+
+        fields = build_context({}, "audit", extra={"consistency_check": ""})
+        self.assertNotIn("consistency_check", fields)
+
+    def test_audit_prompt_asks_for_proper_nouns(self):
+        from app.agents.prompts import render_audit_prompt
+
+        prompt = render_audit_prompt("# 上下文")
+        self.assertIn("专有名词", prompt)
+        self.assertIn("一致性核对提示", prompt)
+        self.assertIn("PubMed", prompt)
+        # 段落开头的排版标记不许被当成正文引用
+        self.assertIn("排版标记", prompt)
+
+    def test_category_is_registered(self):
+        """新类目必须在枚举里，否则会被静默改写成"语言表达"。"""
+
+        from app.state.schema import ISSUE_CATEGORIES
+
+        self.assertIn("专有名词", ISSUE_CATEGORIES)
+        from app.agents.audit import _normalize_issue
+
+        spans = self.spans("我们在 Pubmed 上做了实验，效果不错。")
+        issue = _normalize_issue(
+            {
+                "span_label": spans[0].label,
+                "category": "专有名词",
+                "severity": "medium",
+                "problem": "同一个数据集在别处写作 PubMed，写法不统一",
+                "evidence": "我们在 Pubmed 上做了实验，效果不错",
+            },
+            chunk=spans,
+            document=spans[0].text,
+        )
+        self.assertEqual(issue["category"], "专有名词")
+
+
+class TestCrossSectionChecks(unittest.TestCase):
+    """跨章节一致性：只在摘要/结论出现、正文没有的专有名词（BERT 那一类）。"""
+
+    def test_summary_only_name_is_reported(self):
+        document = (
+            "## 摘要\n\n"
+            "本文使用 BERT 与 GCN 完成了节点分类。\n\n"
+            "## 3 实验\n\n"
+            "我们在 Cora 上训练了 GCN，效果比基线好。\n\n"
+            "## 5 结论\n\n"
+            "本文提出的 BERT 方案在小样本场景下有效。\n"
+        )
+        gaps = find_cross_section_gaps(build_spans(document))
+        names = [item["name"] for item in gaps]
+
+        self.assertIn("BERT", names)  # 摘要和结论都提了，正文（实验）没有
+        self.assertNotIn("GCN", names)  # 正文里出现过，不算问题
+
+    def test_body_only_name_is_not_reported(self):
+        """只在正文出现、总结没提：不是问题（不能反过来误报）。"""
+
+        document = "## 摘要\n\n本文提出了一种新方法。\n\n## 3 实验\n\n我们用了 GraphSAGE 做对比。\n"
+        self.assertEqual(find_cross_section_gaps(build_spans(document)), [])
+
+    def test_common_english_words_are_not_names(self):
+        """普通英文词与句首大写不算专有名词，否则会满篇误报。"""
+
+        document = "## 摘要\n\nWe propose a method and Table 1 shows the results.\n\n## 3 实验\n\n我们做了实验。\n"
+        self.assertEqual(find_cross_section_gaps(build_spans(document)), [])
+
+    def test_near_miss_acronym_is_reported(self):
+        """阿里云 ESC / ECS 这类只差一个字符的写法。"""
+
+        document = (
+            "## 3 实验\n\n"
+            "我们把模型部署到了阿里云 ECS 上，使用了 4 张 V100。\n\n"
+            "训练与推理都在阿里云 ECS 完成。\n\n"
+            "## 4 讨论\n\n"
+            "部署环境为阿里云 ESC。\n"
+        )
+        items = find_near_miss_names(build_spans(document))
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["suspected"], "ESC")
+        self.assertEqual(items[0]["likely"], "ECS")
+        self.assertTrue(items[0]["likely_labels"])
+        self.assertTrue(items[0]["suspected_labels"])
+
+    def test_different_but_valid_acronyms_are_not_flagged(self):
+        """GAT 与 GCN 都是真实存在的模型名，不能当成拼写错误。"""
+
+        document = "## 2 相关工作\n\nGAT 引入了注意力，GCN 聚合邻居信息，两者都被广泛使用。\n"
+        self.assertEqual(find_near_miss_names(build_spans(document)), [])
+
+    def test_numbered_codes_are_not_spelling_errors(self):
+        """H01/P01、V100/V200 这类编号与型号，差一个字符也不算拼错。"""
+
+        document = "## 3 方法\n\n见 H01 与 H02 两处说明。\n\n对比 P01、T01 三个段落。\n"
+        self.assertEqual(find_near_miss_names(build_spans(document)), [])
+
+    def test_entity_check_description_lists_both_kinds(self):
+        spans = build_spans(
+            "## 摘要\n\n本文使用 BERT 完成分类。\n\n"
+            "## 5 结论\n\nBERT 方案在阿里云 ESC 上表现良好。\n\n"
+            "## 3 实验\n\n我们在阿里云 ECS 上训练了模型。\n"
+        )
+        sections = describe_entity_check(
+            find_cross_section_gaps(spans), find_near_miss_names(spans)
+        )
+        text = "\n".join(sections)
+        self.assertIn("BERT", text)
+        self.assertIn("正文从未出现", text)
+        self.assertIn("ESC", text)
+
+
+class TestStructureDamage(unittest.TestCase):
+    """排版标记被写进正文：必须在复核阶段被确定性抓住。"""
+
+    def test_doubled_heading_marker_is_reported(self):
+        spans = build_spans("### ### 3.3.5 对比损失函数优化\n\n正文一段。\n")
+        items = find_structure_damage(spans)
+        self.assertTrue(items)
+        self.assertEqual(items[0]["label"], "H01")
+
+    def test_interior_marker_is_reported(self):
+        spans = build_spans("### 3.3.5 ### 对比损失函数优化\n")
+        self.assertTrue(find_structure_damage(spans))
+
+    def test_normal_headings_are_clean(self):
+        spans = build_spans("# 标题\n\n## 3.3.5 对比损失函数优化\n\n- 要点一\n\n正文。\n")
+        self.assertEqual(find_structure_damage(spans), [])
 
 
 if __name__ == "__main__":

@@ -36,6 +36,8 @@ ISSUE_CATEGORIES = (
     "结论",
     "学术规范",
     "降重",
+    # 专有名词（方法名/模型名/数据集名/人名/缩写）的写法与大小写
+    "专有名词",
 )
 
 
@@ -96,6 +98,8 @@ class PaperState(TypedDict, total=False):
     user_request: str
     original_document: str
     current_document: str
+    # 原始 .docx 的路径：改完要写回它（另存副本），所以必须留住"原文件"
+    source_docx: str
 
     # ---------- Orchestrator ----------
     plan_kind: str  # full_review / direct_revision / replan
@@ -176,6 +180,9 @@ class PaperState(TypedDict, total=False):
     final_report: str
     report_path: str
     document_path: str
+    # 带 Word 修订痕迹与批注的 .docx 副本
+    docx_path: str
+    redline_summary: dict[str, Any]
 
 
 def initial_state(
@@ -192,6 +199,7 @@ def initial_state(
         user_request=user_request,
         original_document=document,
         current_document=document,
+        source_docx="",
         document_version=1,
         spans=[],
         proposed_patches=[],
@@ -235,4 +243,6 @@ def initial_state(
         final_report="",
         report_path="",
         document_path="",
+        docx_path="",
+        redline_summary={},
     )

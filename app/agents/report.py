@@ -13,10 +13,64 @@ from typing import Any, Callable
 
 from app.agents.revision import all_applied_edits, all_failed_edits
 from app.config import get_settings
+from app.document.docx_redline import applied_rounds, export_redline
 from app.utils.resilience import guard_snapshots
 from app.utils.tracing import get_recorder, utc_now
 
 SEVERITY_LABEL = {"high": "高", "medium": "中", "low": "低"}
+
+
+def write_redline_docx(
+    state: Any,
+    *,
+    run_dir: Path,
+    logger: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """
+    把已落实的改动写回 Word 原文件，另存为带**修订痕迹 + 批注**的副本。
+
+    为什么是"另存副本"：原文件必须一字不动地留着，
+    用户要能对照、要能拒绝、要能反悔。
+
+    写不回去的改动不会被丢掉：它们会变成文档里的批注，
+    并在返回的摘要里列出来。
+    """
+
+    log = logger or print
+    settings = get_settings()
+    if not settings.output.docx_output:
+        return {}
+
+    source = str(state.get("source_docx") or "")
+    rounds = applied_rounds(state)
+    if not source or not rounds:
+        return {}
+
+    path = Path(source)
+    if not path.exists():
+        log(f"[Report] 找不到原始 Word 文件，跳过写回：{path}")
+        return {}
+
+    run_dir.mkdir(parents=True, exist_ok=True)
+    target = run_dir / "revised_document.docx"
+    try:
+        outcome = export_redline(
+            path.read_bytes(),
+            rounds,
+            str(target),
+            author=settings.output.redline_author,
+            comments=settings.output.redline_comments,
+        )
+    except Exception as exc:  # noqa: BLE001 - 写回失败不该让整个任务失败
+        log(f"[Report] 写回 Word 失败（{type(exc).__name__}: {exc}），只输出文字稿。")
+        return {"redline_summary": {"error": f"{type(exc).__name__}: {exc}"}}
+
+    summary = outcome.to_json()
+    log(f"[Report] Word 副本：{target}（{outcome.summary()}）")
+    return {
+        "docx_path": str(target),
+        "redline_summary": summary,
+    }
 
 
 def _cell(value: Any) -> str:
@@ -61,6 +115,14 @@ def build_report(state: Any, *, trace_summary: dict[str, Any] | None = None) -> 
         f"- 迭代轮次：{state.get('iteration', 0)} / {state.get('max_iterations', 3)}"
     )
     lines.append(f"- 最终结论：{_final_conclusion(state)}")
+    redline = state.get("redline_summary") or {}
+    if state.get("docx_path"):
+        lines.append(f"- Word 副本（带修订痕迹）：`{state['docx_path']}`")
+        if redline.get("skipped"):
+            lines.append(
+                f"- 其中 {redline.get('skipped')} 条改动无法自动写回 Word，"
+                "已在原位留批注，需要人工处理（见第四节末尾）"
+            )
     lines.append("")
 
     # ---------- 计划 ----------
@@ -86,6 +148,13 @@ def build_report(state: Any, *, trace_summary: dict[str, Any] | None = None) -> 
             f"审查片段 {meta.get('chunks', 0)} 个（失败 {meta.get('failed_chunks', 0)} 个），"
             f"原始问题 {meta.get('raw_issues', 0)} 条，合并后 {meta.get('merged_issues', 0)} 条。"
         )
+        if meta.get("chunks_dropped"):
+            lines.append(
+                f"⚠ 受上限限制，本次只审到前 {meta.get('chunks', 0)} 批"
+                f"（整篇共 {meta.get('chunks_total', 0)} 批），"
+                f"后面 {meta.get('chunks_dropped')} 批**没有审**；"
+                "需要审全文请调大 `PRA_AUDIT_MAX_CHUNKS` 或 `PRA_AUDIT_CHUNK_TOKENS`。"
+            )
         lines.append("")
     if findings:
         applied_issue_ids = {
@@ -231,6 +300,34 @@ def build_report(state: Any, *, trace_summary: dict[str, Any] | None = None) -> 
                 f"｜Agent 给的理由：{_cell((patch.get('rationale') or '—')[:80])}"
             )
         lines.append("")
+
+    # 写不回 Word 的改动：这些必须在 Word 里手工处理，所以单独列出来
+    skipped_items = (state.get("redline_summary") or {}).get("skipped_items") or []
+    if skipped_items:
+        lines.append("### 需要在 Word 里人工处理的改动")
+        lines.append("")
+        lines.append(
+            "下面这些改动已经通过审核，但没办法安全地写回 Word"
+            "（多与公式、图片、跨单元格或排版有关），"
+            "已在文档对应段落留下批注（作者：论文修改助手），请在 Word 里手工确认。"
+        )
+        lines.append("")
+        lines.append("| 补丁 | 位置 | 原文 | 建议改为 | 为什么没自动改 |")
+        lines.append("| --- | --- | --- | --- | --- |")
+        for item in skipped_items:
+            position = item.get("position") or ""
+            location = str(item.get("location") or "").strip()
+            if location and location not in str(position):
+                position = f"{position}（{location}）" if position else location
+            after = str(item.get("after") or "").strip()
+            lines.append(
+                f"| {_cell(item.get('patch_id'))} | {_cell(position)} "
+                f"| {_cell(str(item.get('before') or '')[:80])} "
+                f"| {_cell(after[:80] if after else '（删除）')} "
+                f"| {_cell(item.get('reason'))} |"
+            )
+        lines.append("")
+
     if failed_edits:
         lines.append("未能落实的修改：")
         lines.append("")
@@ -406,6 +503,11 @@ def write_outputs(
     run_id = state.get("run_id", "adhoc")
     run_dir = settings.paths.run_dir(run_id)
 
+    # 先把改动写回 Word（另存副本）：这样报告里能一起说明结果
+    redline = write_redline_docx(state, run_dir=run_dir, logger=log)
+    if redline:
+        state = {**state, **redline}
+
     report = build_report(state, trace_summary=trace_summary)
 
     paths: dict[str, str] = {}
@@ -423,6 +525,9 @@ def write_outputs(
         original_path = run_dir / "original_document.md"
         original_path.write_text(state.get("original_document") or "", encoding="utf-8")
         paths["original_path"] = str(original_path)
+
+        if redline:
+            paths["docx_path"] = str(redline.get("docx_path") or "")
 
         edits_path = run_dir / "edits.json"
         edits_path.write_text(

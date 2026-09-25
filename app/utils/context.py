@@ -55,6 +55,7 @@ AGENT_CONTEXT_FIELDS: dict[str, tuple[str, ...]] = {
         "instructions",
         "document_stats",
         "chunk_position",
+        "consistency_check",
         "chunk_text",
     ),
     "revision": (
@@ -100,6 +101,7 @@ FIELD_LABELS: dict[str, str] = {
     "focus_areas": "重点关注方向",
     "instructions": "上游 Agent 的指令",
     "chunk_position": "当前片段位置",
+    "consistency_check": "一致性核对提示（确定性检查）",
     "chunk_text": "待处理文本（带段落 ID）",
     "approved_issues": "需要解决的问题",
     "human_constraints": "用户约束（旧格式）",
@@ -288,6 +290,27 @@ def _b_chunk_text(state: Any, extra: dict[str, Any]) -> str:
     if text is None:
         text = state.get("current_document") or ""
     return str(text)
+
+
+def _b_consistency_check(state: Any, extra: dict[str, Any]) -> str:
+    """
+    一致性核对提示（确定性全文扫描的结果，不是模型猜的）。
+
+    三类：
+
+    1. 同一个专有名词在全文有几种写法（PubMed / Pubmed）；
+    2. 只在摘要或结论出现、正文从未出现的方法名/数据集名（"实验没写 BERT、结论写了"）；
+    3. 疑似拼错的专有名词（阿里云 ESC / ECS）。
+    """
+
+    hint = str(extra.get("consistency_check") or "").strip()
+    if not hint:
+        return ""
+    return (
+        "系统已对**全文**做过确定性扫描（不受分批评审的限制），结果如下，"
+        "可以放心作为依据：\n"
+        + hint
+    )
 
 
 def _b_approved_issues(state: Any, extra: dict[str, Any]) -> str:
@@ -512,6 +535,7 @@ _BUILDERS: dict[str, Callable[[Any, dict[str, Any]], str]] = {
     "focus_areas": _b_focus_areas,
     "instructions": _b_instructions,
     "chunk_position": _b_chunk_position,
+    "consistency_check": _b_consistency_check,
     "chunk_text": _b_chunk_text,
     "approved_issues": _b_approved_issues,
     "human_constraints": _b_human_constraints,

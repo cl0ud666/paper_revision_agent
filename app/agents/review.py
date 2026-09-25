@@ -21,8 +21,14 @@ from typing import Any, Callable
 
 from app.agents.prompts import REVIEW_SYSTEM, render_review_prompt
 from app.config import get_settings
+from app.document.spans import build_spans
 from app.utils.budget import BudgetExceeded
 from app.utils.context import build_context, format_context
+from app.utils.consistency import (
+    find_cross_section_gaps,
+    find_near_miss_names,
+    find_structure_damage,
+)
 from app.utils.json_utils import parse_json_object
 from app.utils.llm import call_llm
 from app.utils.resilience import get_guard
@@ -518,6 +524,109 @@ def _precheck(
             )
     else:
         checks.append({"name": "段落重复", "status": "ok", "detail": "未发现重复段落"})
+
+    # 下面几条都是"全文确定性检查"：先把段落结构解析一次，后续复用
+    document_spans = build_spans(document)
+
+    # 8) 排版结构是否被改坏（标记被抄进正文 / 标记重复 / 标题只剩标记）
+    damage = find_structure_damage(document_spans)
+    if damage:
+        checks.append(
+            {
+                "name": "排版结构",
+                "status": "fail",
+                "detail": f"检测到 {len(damage)} 处排版标记异常",
+            }
+        )
+        hard_fail = True
+        for position, item in enumerate(damage[:3], start=1):
+            forced_remaining.append(
+                {
+                    "id": -100 - position,
+                    "category": "学术规范",
+                    "severity": "high",
+                    "location": item.get("label") or "全文",
+                    "problem": f"{item.get('label')}：{item.get('reason')}，当前是「{item.get('text')}」",
+                    "suggestion": "把标题文字改回纯文字，不要包含 #、- 这类排版标记",
+                    "source": "precheck",
+                }
+            )
+    else:
+        checks.append({"name": "排版结构", "status": "ok", "detail": "标题与列表标记正常"})
+
+    # 9) 跨章节一致性（确定性全文检查）
+    #    这一类问题模型"时灵时不灵"：摘要与结论常常不在同一批里，
+    #    一次只看一批的 Audit 能不能发现完全看运气。全文扫描没有这个问题。
+    gaps = find_cross_section_gaps(document_spans)
+    near_misses = find_near_miss_names(document_spans)
+    # 疑似笔误的名字常常同时"正文没出现"（那是笔误造成的假象），只报更准确的那条
+    suspected_forms = {str(item.get("suspected") or "") for item in near_misses}
+    gaps = [item for item in gaps if str(item.get("name")) not in suspected_forms]
+    if gaps:
+        checks.append(
+            {
+                "name": "跨章节一致性",
+                "status": "warn",
+                "detail": f"{len(gaps)} 个专有名词只在摘要/结论出现，正文没有",
+            }
+        )
+        for position, item in enumerate(gaps[:3], start=1):
+            where = "、".join(item.get("labels") or []) or "摘要/结论"
+            forced_remaining.append(
+                {
+                    "id": -200 - position,
+                    "category": "专有名词",
+                    "severity": "medium",
+                    "location": where,
+                    "span_label": (item.get("labels") or [""])[0],
+                    "problem": (
+                        f"「{item['name']}」只出现在摘要/结论（{where}），"
+                        "正文的方法或实验部分从未出现：可能正文缺了对应的实验说明，"
+                        "也可能总结里写了正文没做过的东西"
+                    ),
+                    "suggestion": (
+                        f"两条路选一条：在正文补上「{item['name']}」对应的方法/实验说明，"
+                        f"或从摘要/结论里删掉它。若确属笔误或另一种写法，请改成全文统一的写法"
+                    ),
+                    "source": "precheck",
+                }
+            )
+    else:
+        checks.append(
+            {"name": "跨章节一致性", "status": "ok", "detail": "摘要/结论提到的方法都在正文出现过"}
+        )
+
+    if near_misses:
+        checks.append(
+            {
+                "name": "专有名词拼写",
+                "status": "warn",
+                "detail": f"{len(near_misses)} 处疑似拼写错误",
+            }
+        )
+        for position, item in enumerate(near_misses[:3], start=1):
+            where = "、".join(item.get("suspected_labels") or []) or "全文"
+            forced_remaining.append(
+                {
+                    "id": -300 - position,
+                    "category": "专有名词",
+                    "severity": "medium",
+                    "location": where,
+                    "span_label": (item.get("suspected_labels") or [""])[0],
+                    "problem": (
+                        f"「{item['suspected']}」（{where}，只出现 "
+                        f"{item.get('suspected_count')} 次）与「{item['likely']}」"
+                        f"（出现 {item.get('likely_count')} 次）只差一个字符，疑似拼写错误"
+                    ),
+                    "suggestion": (
+                        f"核对「{item['suspected']}」是不是「{item['likely']}」的笔误；"
+                        "若是，统一改成正确写法"
+                    ),
+                    "source": "precheck",
+                }
+            )
+    else:
+        checks.append({"name": "专有名词拼写", "status": "ok", "detail": "未发现近似拼写"})
 
     # 7) 约束存在性（信息性检查）
     constraints = state.get("human_constraints") or []

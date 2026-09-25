@@ -217,6 +217,105 @@ class TestPatchValidation(unittest.TestCase):
         self.assertEqual(patch.before, self.abstract.text)
 
 
+class TestStructureMarkers(unittest.TestCase):
+    """
+    排版标记（### / - / |）是文档结构，不是正文。
+
+    模型很容易把送审文本里的 ``### 3.3.5 对比损失函数优化`` 当成正文抄进修改结果，
+    结果标题变成 ``### ### 3.3.5 …``，或者在 Word 里多出真实的 "###" 字符。
+    这里验证补丁进来时就被剥掉，并且**最终文本只保留一个标记**。
+    """
+
+    def setUp(self) -> None:
+        self.document = (
+            "# 论文标题\n\n"
+            "## 3.3.5 对比损失函数优化\n\n"
+            "- 要点一：先做预处理。\n\n"
+            "| 方法 | 准确率 |\n| --- | --- |\n| 本文方法 | 85.2 |\n"
+        )
+        self.spans = build_spans(self.document)
+
+    def label_of(self, text: str) -> str:
+        return next(span.label for span in self.spans if span.text == text)
+
+    def test_heading_marker_is_stripped_from_replacement(self):
+        patch = patch_from_model(
+            {
+                "span_label": self.label_of("## 3.3.5 对比损失函数优化"),
+                "quote": "3.3.5 对比损失函数优化",
+                "replace": "### 3.3.5 对比损失函数优化",
+                "rationale": "改标题",
+            },
+            spans=self.spans,
+            patch_id="patch-001",
+        )
+        validate_patch(patch, self.spans)
+        self.assertEqual(patch.replace, "3.3.5 对比损失函数优化")
+        self.assertTrue(any("排版标记" in warning for warning in patch.warnings))
+
+        decide_patch(patch, "accept")
+        outcome = apply_patches(self.document, self.spans, [patch])
+        self.assertIn("## 3.3.5 对比损失函数优化", outcome.document)
+        self.assertNotIn("### 3.3.5", outcome.document)
+        self.assertNotIn("## ###", outcome.document)
+
+    def test_quoted_marker_is_stripped_too(self):
+        patch = patch_from_model(
+            {
+                "span_label": self.label_of("## 3.3.5 对比损失函数优化"),
+                "quote": "## 3.3.5 对比损失函数优化",
+                "replace": "3.3.5 对比损失函数优化与实现",
+                "rationale": "补全标题",
+            },
+            spans=self.spans,
+            patch_id="patch-001",
+        )
+        validate_patch(patch, self.spans)
+        self.assertEqual(patch.quote, "3.3.5 对比损失函数优化")
+
+        decide_patch(patch, "accept")
+        outcome = apply_patches(self.document, self.spans, [patch])
+        self.assertIn("## 3.3.5 对比损失函数优化与实现", outcome.document)
+
+    def test_list_marker_is_stripped(self):
+        patch = patch_from_model(
+            {
+                "span_label": self.label_of("- 要点一：先做预处理。"),
+                "quote": "要点一：先做预处理。",
+                "replace": "- 要点一：先做数据预处理与划分。",
+                "rationale": "说得具体些",
+            },
+            spans=self.spans,
+            patch_id="patch-001",
+        )
+        validate_patch(patch, self.spans)
+        self.assertEqual(patch.replace, "要点一：先做数据预处理与划分。")
+
+        decide_patch(patch, "accept")
+        outcome = apply_patches(self.document, self.spans, [patch])
+        self.assertIn("- 要点一：先做数据预处理与划分。", outcome.document)
+        self.assertNotIn("- - ", outcome.document)
+
+    def test_table_pipes_are_stripped(self):
+        table_label = next(span.label for span in self.spans if span.kind == "table")
+        patch = patch_from_model(
+            {
+                "span_label": table_label,
+                "quote": "85.2",
+                "replace": "| 87.4 |",
+                "rationale": "更正数值",
+            },
+            spans=self.spans,
+            patch_id="patch-001",
+        )
+        validate_patch(patch, self.spans)
+        self.assertEqual(patch.replace, "87.4")
+
+        decide_patch(patch, "accept")
+        outcome = apply_patches(self.document, self.spans, [patch])
+        self.assertIn("| 本文方法 | 87.4 |", outcome.document)
+
+
 class TestPatchDecisionsAndApply(unittest.TestCase):
     def setUp(self) -> None:
         self.spans = build_spans(DOC)

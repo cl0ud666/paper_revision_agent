@@ -34,6 +34,27 @@ from app.workflow.harness import Harness  # noqa: E402
 SEVERITY_LABEL = {"high": "高", "medium": "中", "low": "低"}
 
 
+def keep_source_docx(data: bytes, name: str) -> str:
+    """
+    把上传的 .docx 存到磁盘，返回路径。
+
+    为什么要落盘：改完要把它当"原文件"写回一份带修订痕迹的副本，
+    而任务开始到出结果之间会隔着好几次人工确认，内存里留不住。
+    按内容哈希命名，同一份文件重复上传不会堆一堆副本。
+    """
+
+    import hashlib
+
+    folder = get_settings().paths.data_dir / "uploads"
+    folder.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha1(data).hexdigest()[:12]
+    safe_name = Path(name).name or "paper.docx"
+    path = folder / f"{digest}-{safe_name}"
+    if not path.exists():
+        path.write_bytes(data)
+    return str(path)
+
+
 def collect_edits(state: dict) -> list[dict]:
     """汇总所有轮次真正落实的修改（revision_edits 只有最后一轮）。"""
 
@@ -126,6 +147,12 @@ def document_input() -> tuple[str, str]:
                 st.error(f"读取失败：{exc}")
             else:
                 st.session_state["document"] = loaded.text
+                # .docx 才留下原文件：改完要写回它做一份带修订痕迹的副本
+                st.session_state["source_docx"] = (
+                    keep_source_docx(uploaded.getvalue(), uploaded.name)
+                    if uploaded.name.lower().endswith(".docx")
+                    else ""
+                )
                 st.success(f"已读取：{uploaded.name}（{loaded.describe()}）")
                 from app.document.spans import ZONE_NAMES, build_spans, structure_report
 
@@ -145,12 +172,14 @@ def document_input() -> tuple[str, str]:
         pasted = st.text_area("粘贴论文内容", height=200)
         if st.button("使用粘贴内容") and pasted.strip():
             st.session_state["document"] = pasted
+            st.session_state["source_docx"] = ""
             st.success("已载入粘贴内容。")
 
     with tab_sample:
         sample_path = get_settings().paths.samples_dir / "sample_paper.md"
         if sample_path.exists() and st.button("载入示例论文"):
             st.session_state["document"] = sample_path.read_text(encoding="utf-8")
+            st.session_state["source_docx"] = ""
             st.success("已载入示例论文。")
 
     return request, st.session_state.get("document", "")
@@ -251,9 +280,45 @@ def show_results(result) -> None:
             )
 
     with tab_document:
+        if result.docx_path and Path(result.docx_path).exists():
+            st.success(
+                "已生成 Word 副本（保留原文件，改动以**修订痕迹**标注，"
+                "每条改动都带批注说明理由）。在 Word / WPS 里打开后，"
+                "可以逐条接受或拒绝。"
+            )
+            docx_bytes = Path(result.docx_path).read_bytes()
+            st.download_button(
+                "下载 Word 副本（带修订痕迹）",
+                data=docx_bytes,
+                file_name=Path(result.docx_path).name,
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                type="primary",
+            )
+            skipped = (state.get("redline_summary") or {}).get("skipped")
+            if skipped:
+                st.warning(
+                    f"另有 {skipped} 条改动无法自动写回 Word"
+                    "（多与公式、图片或跨单元格有关），已在文档原位留批注。"
+                )
+                with st.expander("看看是哪几条、该怎么手工改", expanded=True):
+                    for item in (state.get("redline_summary") or {}).get(
+                        "skipped_items"
+                    ) or []:
+                        position = item.get("position") or item.get("location") or ""
+                        location = item.get("location") or ""
+                        if location and location not in str(position):
+                            position = f"{position}（{location}）" if position else location
+                        st.markdown(
+                            f"**[{item.get('patch_id')}] {position}**\n\n"
+                            f"- 原文：{item.get('before') or '—'}\n"
+                            f"- 建议改为：{item.get('after') or '（删除）'}\n"
+                            f"- 没自动改的原因：{item.get('reason') or '—'}"
+                        )
+            st.divider()
+
         st.text_area("修改后论文", result.revised_document, height=400)
         st.download_button(
-            "下载论文",
+            "下载文字稿（Markdown）",
             data=(result.revised_document or "").encode("utf-8"),
             file_name="revised_document.md",
             mime="text/markdown",
@@ -314,7 +379,10 @@ def main() -> None:
         st.session_state["harness"] = harness
         with st.spinner("正在理解任务并规划执行路径..."):
             st.session_state["result"] = harness.start(
-                request, document, max_iterations=options["max_iterations"]
+                request,
+                document,
+                max_iterations=options["max_iterations"],
+                source_docx=st.session_state.get("source_docx", ""),
             )
         st.rerun()
 

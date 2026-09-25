@@ -185,6 +185,20 @@ class ServerSettings:
 
 
 @dataclass(frozen=True)
+class OutputSettings:
+    """
+    交付物设置：把改动写回 Word 原文件（另存副本）。
+
+    ``docx_output`` 关掉时只产出 Markdown，不生成 .docx；
+    上传的如果本来就不是 Word（pdf/txt/md），这一路会自动跳过。
+    """
+
+    docx_output: bool
+    redline_author: str
+    redline_comments: bool
+
+
+@dataclass(frozen=True)
 class PathSettings:
     """项目内的路径。"""
 
@@ -208,6 +222,7 @@ class Settings:
     workflow: WorkflowSettings
     budget: BudgetSettings
     server: ServerSettings
+    output: OutputSettings
     paths: PathSettings
 
 
@@ -302,6 +317,13 @@ def get_settings() -> Settings:
             ),
             max_concurrent_runs=_get_int("PRA_MAX_CONCURRENT_RUNS", 2),
             event_poll_interval=_get_float("PRA_EVENT_POLL_INTERVAL", 1.0),
+        ),
+        output=OutputSettings(
+            # 默认开：用户上传 .docx 时，改动会以 Word 修订痕迹写回一份副本
+            docx_output=_get_bool("PRA_DOCX_OUTPUT", True),
+            # Word 里显示"谁改的"和"谁写的批注"
+            redline_author=_get("PRA_REDLINE_AUTHOR", "论文修改助手"),
+            redline_comments=_get_bool("PRA_REDLINE_COMMENTS", True),
         ),
         paths=PathSettings(
             project_root=project_root,
