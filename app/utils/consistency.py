@@ -143,7 +143,10 @@ def describe_inconsistencies(items: Iterable[dict[str, Any]]) -> str:
 # ---------------------------------------------------------------- 专有名词写法
 
 # 只认"含字母的拉丁词"（模型名 / 数据集名 / 人名 / 缩写都在这一类）
-_LATIN_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:[.\-][A-Za-z0-9]+)*")
+# 标识符不是论文术语：不能把 FEWSHOT_QUERY_DIR 拆成 FEWSHOT/QUERY/DIR。
+_LATIN_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9_])[A-Za-z][A-Za-z0-9]*(?:[.\-][A-Za-z0-9]+)*(?![A-Za-z0-9_])"
+)
 
 
 def _name_key(token: str) -> str:
@@ -311,7 +314,7 @@ _NAME_STOPWORDS = frozenset(
 # "总结性"位置：摘要与结论。这两处提到的方法/数据集，正文里应当出现过。
 _CONCLUSION_KEYS = ("结论", "总结", "结语", "conclusion", "conclusions", "summary")
 
-_LATIN_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:[.\-][A-Za-z0-9]+)*")
+_LATIN_WORD_RE = _LATIN_TOKEN_RE
 
 
 @dataclass
@@ -511,13 +514,19 @@ def describe_entity_check(
         sections.append("\n".join(lines))
 
     if miss_items:
-        lines = ["疑似拼写错误（两种写法只差一个字符，罕见的那种可能是笔误）："]
+        # 措辞中性：形近 ≠ 写错。GNN / KNN / CNN / RNN 都是真实存在的独立术语，
+        # 只差一个字符不能说明其中一个是笔误——必须回到两处的上下文去判断。
+        # （这里不写"疑似笔误"、也不强调出现次数，避免把模型推向"少数服从多数"。）
+        lines = [
+            "形近术语（两种写法只差一个字符）。**这只是提示，不代表其中哪个写错了**，"
+            "请结合两处所在的上下文判断它们是不是同一个东西："
+        ]
         for item in miss_items[:6]:
             suspected = "、".join(item.get("suspected_labels") or []) or "（未定位）"
             likely = "、".join(item.get("likely_labels") or []) or "（未定位）"
             lines.append(
-                f"- 「{item['suspected']}」（{suspected}，{item.get('suspected_count')} 次）"
-                f" 与 「{item['likely']}」（{likely}，{item.get('likely_count')} 次）"
+                f"- 「{item['suspected']}」（出现在 {suspected}）"
+                f" 与 「{item['likely']}」（出现在 {likely}）"
             )
         sections.append("\n".join(lines))
     return sections

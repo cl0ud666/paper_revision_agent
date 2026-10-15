@@ -114,7 +114,17 @@ class CircuitBreaker:
 
 @dataclass
 class AgentGuard:
-    """把 Timeout + Retry + CircuitBreaker 组合成统一的调用入口。"""
+    """
+    把 Timeout + Retry + CircuitBreaker 组合成统一的调用入口。
+
+    线程安全说明：Guard 是**按 Agent 共享的单例**（``get_guard`` 缓存），
+    而 Audit 的分块会并发调用同一个 Guard。熔断器的 ``failures += 1``
+    是"读-改-写"，并发下会丢计数（24 个分块同时失败只记 1 次），
+    所以这里用一把锁把熔断器的状态变更串起来。
+
+    锁只保护**状态变更**，不包住 ``fn`` 调用，也不包住重试等待，
+    否则并发会退化成串行。
+    """
 
     name: str
     retry: RetryPolicy = field(default_factory=RetryPolicy)
@@ -122,6 +132,9 @@ class AgentGuard:
     default_timeout: float | None = 180.0
     sleep: Callable[[float], None] = time.sleep
     on_event: Callable[[str], None] | None = None
+    _lock: threading.Lock = field(
+        default_factory=threading.Lock, repr=False, compare=False
+    )
 
     def run(
         self,
@@ -148,7 +161,7 @@ class AgentGuard:
         for attempt in range(1, self.retry.max_attempts + 1):
             attempts = attempt
             try:
-                self.breaker.check()
+                self._breaker_check()
             except CircuitOpenError as exc:
                 last_error = exc
                 break
@@ -157,20 +170,20 @@ class AgentGuard:
                 value = _call_with_timeout(fn, effective_timeout)
             except AgentTimeoutError as exc:
                 last_error = exc
-                self.breaker.on_failure()
+                self._breaker_failure()
                 self._notify(f"{self.name} 超时（{effective_timeout}s）")
                 if not self.retry.retry_on_timeout:
                     break
             except Exception as exc:  # noqa: BLE001 - 统一治理所有异常
                 last_error = exc
-                self.breaker.on_failure()
+                self._breaker_failure()
                 self._notify(f"{self.name} 第 {attempt} 次失败：{exc}")
                 if attempt >= self.retry.max_attempts:
                     break
                 self.sleep(self.retry.delay_for(attempt))
                 continue
             else:
-                self.breaker.on_success()
+                self._breaker_success()
                 self._trace(
                     recorder,
                     run_id=run_id,
@@ -204,6 +217,18 @@ class AgentGuard:
         raise last_error
 
     # ---------- 内部 ----------
+
+    def _breaker_check(self) -> None:
+        with self._lock:
+            self.breaker.check()
+
+    def _breaker_success(self) -> None:
+        with self._lock:
+            self.breaker.on_success()
+
+    def _breaker_failure(self) -> None:
+        with self._lock:
+            self.breaker.on_failure()
 
     def _notify(self, message: str) -> None:
         if self.on_event is not None:
@@ -270,7 +295,8 @@ class AgentGuard:
         recorder.record(record)
 
     def snapshot(self) -> dict[str, Any]:
-        return self.breaker.snapshot()
+        with self._lock:
+            return self.breaker.snapshot()
 
 
 def _call_with_timeout(fn: Callable[[], T], timeout: float | None) -> T:

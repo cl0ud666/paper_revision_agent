@@ -26,6 +26,11 @@ def route_from_orchestrator(state: Any) -> str:
     if action not in ROUTE_ACTIONS:
         # 状态异常时回到最安全的路径：先审查
         return "audit"
+    # 已经问过用户一轮"前后矛盾"了，就不再开第二次闸门——
+    # 同一批矛盾反复问只会让人烦；用户的判断已经作为规则存在 State 里，
+    # Revision 会照它执行。真要再问，请让用户在多轮追问里自己提。
+    if action == "human_approval" and state.get("decisions"):
+        return "revision"
     return action
 
 
@@ -34,22 +39,36 @@ def route_after_audit(state: Any) -> str:
     审查完成后：
 
     - 审查失败 / 没有发现问题 → 直接出报告；
-    - 启用了问题闸门（PRA_ISSUE_GATE=1）→ 先让用户确认要改哪些问题；
-    - 默认（闸门关闭）→ 直接去提补丁，用户只在补丁清单上做一次决定。
+    - **只有"前后矛盾"这类必须由作者拍板的问题**才停下来问用户；
+    - 其它问题（写错的、可以更好的）不问，直接去提补丁。
+
+    为什么不再问"有没有要忽略的"：论文修改里绝大多数问题没有歧义，
+    让用户逐条过一遍纯属打扰；真正需要人拍板的只有"以哪一处为准"这种。
     """
 
     if state.get("audit_failed"):
         return "report"
     if not state.get("audit_findings"):
         return "report"
-    if state.get("issue_gate"):
-        # 先让用户看一遍问题清单：有没有要忽略的（默认都要改）
+    if _pending_decisions(state):
         return "issue_review"
     return "revision"
 
 
+def _pending_decisions(state: Any) -> list[dict[str, Any]]:
+    """还没被用户拍板的"需要在冲突里选一个"的问题。"""
+
+    if state.get("decisions"):
+        return []  # 已经拍过板了，不再重复打扰
+    return [
+        issue
+        for issue in (state.get("audit_findings") or [])
+        if (issue.get("kind") or "fix") == "decision" and not issue.get("ignored")
+    ]
+
+
 def route_after_issue_review(state: Any) -> str:
-    """问题闸门之后：还有要改的问题就进入修改，全被忽略就直接出报告。"""
+    """决策闸门之后：还有要改的问题就进入修改，全被忽略就直接出报告。"""
 
     findings = state.get("audit_findings") or []
     pending = [issue for issue in findings if not issue.get("ignored")]

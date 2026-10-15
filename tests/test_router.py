@@ -88,9 +88,32 @@ class TestAuditRouting(unittest.TestCase):
         state = {"audit_findings": [{"id": 1}], "audit_failed": False}
         self.assertEqual(route_after_audit(state), "revision")
 
-    def test_issue_gate_enabled_routes_to_issue_review(self) -> None:
-        state = {"audit_findings": [{"id": 1}], "audit_failed": False, "issue_gate": True}
-        self.assertEqual(route_after_audit(state), "issue_review")
+    def test_only_contradictions_route_to_issue_review(self) -> None:
+        """
+        闸门不再问"有没有要忽略的"，只在**前后矛盾必须由作者拍板**时才停下来。
+
+        写错的（fix）、可以更好的（advice）都不打扰用户，直接进 Revision。
+        """
+
+        fix_only = {"audit_findings": [{"id": 1, "kind": "fix"}], "audit_failed": False}
+        self.assertEqual(route_after_audit(fix_only), "revision")
+
+        advice_only = {"audit_findings": [{"id": 1, "kind": "advice"}], "audit_failed": False}
+        self.assertEqual(route_after_audit(advice_only), "revision")
+
+        contradiction = {
+            "audit_findings": [{"id": 1, "kind": "decision"}],
+            "audit_failed": False,
+        }
+        self.assertEqual(route_after_audit(contradiction), "issue_review")
+
+        # 已经拍过板就不再重复问
+        answered = {
+            "audit_findings": [{"id": 1, "kind": "decision"}],
+            "audit_failed": False,
+            "decisions": True,
+        }
+        self.assertEqual(route_after_audit(answered), "revision")
 
     def test_issue_review_routing(self) -> None:
         from app.workflow.router import route_after_issue_review

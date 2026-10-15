@@ -18,6 +18,7 @@ Human Approval 通过 ``interrupt`` 暂停，因此 Graph 必须带 Checkpointer
 
 from __future__ import annotations
 
+import os
 import threading
 from typing import Any
 
@@ -55,12 +56,54 @@ def build_checkpointer(settings: Settings | None = None) -> Any:
     """
     创建 Checkpointer。
 
-    默认使用内存 Checkpointer（同一进程内可暂停 / 恢复）。
-    如果安装了 ``langgraph-checkpoint-sqlite`` 并配置了 ``PRA_CHECKPOINT_DB``，
-    则使用 SQLite，实现跨进程的持久化恢复（例如“用户第二天回来继续”）。
+    auto 模式配置 PRA_CHECKPOINT_URL 后使用 PostgreSQL，否则本地使用 SQLite。
+    PostgreSQL 不可用时明确失败，避免生产任务静默退回内存而无法恢复。
+    显式 memory 仅用于开发和测试。
     """
 
     settings = settings or get_settings()
+    backend = settings.workflow.checkpoint_backend
+    url = settings.workflow.checkpoint_url
+    if backend == "auto":
+        backend = "postgres" if url else "sqlite"
+    if backend not in {"postgres", "sqlite", "memory"}:
+        raise ValueError("PRA_CHECKPOINT_BACKEND 必须为 auto/postgres/sqlite/memory")
+    if backend == "memory":
+        return InMemorySaver()
+    if backend == "postgres":
+        if not url:
+            raise ValueError("PostgreSQL Checkpointer 需要配置 PRA_CHECKPOINT_URL")
+        # 连接池按进程创建；Celery prefork 不能复用父进程的数据库连接。
+        key = f"postgres:{os.getpid()}:{url}"
+        with _CHECKPOINTERS_LOCK:
+            cached = _CHECKPOINTERS.get(key)
+            if cached is not None:
+                return cached
+            try:
+                from langgraph.checkpoint.postgres import PostgresSaver
+                from psycopg.rows import dict_row
+                from psycopg_pool import ConnectionPool
+                from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+            except ImportError as exc:
+                raise RuntimeError("请安装 requirements-web.txt 中的 PostgreSQL Checkpoint 依赖") from exc
+            pool = None
+            try:
+                pool = ConnectionPool(
+                    conninfo=url,
+                    min_size=1,
+                    max_size=settings.workflow.checkpoint_pool_size,
+                    kwargs={"autocommit": True, "row_factory": dict_row, "prepare_threshold": 0},
+                    open=True,
+                )
+                pool.wait(timeout=10)
+                saver = PostgresSaver(pool, serde=JsonPlusSerializer(allowed_msgpack_modules=[]))
+            except Exception:
+                if pool is not None:
+                    pool.close()
+                # 不在错误中泄露包含密码的数据库 URL。
+                raise RuntimeError("PostgreSQL Checkpointer 连接失败；请检查数据库配置和可用性") from None
+            _CHECKPOINTERS[key] = saver
+            return saver
     db_path = settings.workflow.checkpoint_db
     if db_path:
         try:
@@ -73,7 +116,7 @@ def build_checkpointer(settings: Settings | None = None) -> Any:
             if not path.is_absolute():
                 path = settings.paths.project_root / path
 
-            key = str(path.resolve())
+            key = f"sqlite:{os.getpid()}:{path.resolve()}"
             with _CHECKPOINTERS_LOCK:
                 cached = _CHECKPOINTERS.get(key)
                 if cached is not None:
@@ -110,6 +153,14 @@ def reset_checkpointers() -> None:
             except Exception:  # noqa: BLE001
                 pass
             _CHECKPOINTERS.pop(key, None)
+
+
+def setup_checkpointer() -> None:
+    """部署时执行一次；PostgresSaver 的建表迁移不放在每次任务里。"""
+    saver = build_checkpointer()
+    if isinstance(saver, InMemorySaver):
+        raise RuntimeError("内存 Checkpointer 无需初始化，请配置持久化后端")
+    saver.setup()
 
 
 def build_graph(

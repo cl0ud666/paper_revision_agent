@@ -43,6 +43,7 @@ from app.document.docx_model import (
     Piece,
     w,
 )
+from app.document.patches import changes_code
 from app.document.spans import Span, build_spans, resolve_span
 
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
@@ -87,6 +88,8 @@ class RedlineOutcome:
     skipped: list[dict[str, Any]] = field(default_factory=list)
     changes: int = 0
     comments: int = 0
+    # 只留批注、不改正文的条目（建议 / 需人工处理）有几条
+    suggestions: int = 0
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -183,6 +186,8 @@ def _locate(
         raise Unlocatable("目标位置不在可编辑的段落里")
     start = span.start + start_in
     end = span.start + end_in
+    if changes_code(text[start:end], str(patch.get("replace") or ""), span.text):
+        raise Unlocatable("代码内容或变量名受到保护，已跳过")
 
     before = str(patch.get("before") or "")
     if before and text[start:end] != before:
@@ -200,7 +205,12 @@ def _locate(
     if local_end <= local_start:
         raise Unlocatable("这条改动没有指定要替换的文字")
 
-    if block.obstacles_in(local_start, local_end):
+    obstacles = block.obstacles_in(local_start, local_end)
+    if obstacles:
+        # 引文序号（[4]、[5]）在 Word 里是交叉引用域（REF），不是普通文字。
+        # 改它要同步后面的参考文献编号，机器判断不了，一律交给人。
+        if any(tag.endswith(":fldChar") for tag in obstacles):
+            raise Unlocatable("这条改动需要同步后面文献引用，需要人工处理")
         raise Unlocatable("改动范围里有图片/图形对象，需要人工处理")
 
     owners = {id(piece.owner) for piece in pieces}
@@ -260,6 +270,10 @@ class RedlineWriter:
         self._comments_root: Any = None
         self.changes = 0
         self.comments = 0
+        # Only consolidate revisions created by THIS export, never the author's
+        # pre-existing revisions/comments (even if the author name is identical).
+        self._groups: list[dict[str, Any]] = []
+        self._original_paragraphs: dict[Any, tuple[Any, str]] = {}
         self._ensure_settings()
 
     # ---------- 编号与基础部件 ----------
@@ -493,18 +507,90 @@ class RedlineWriter:
             node = node.getparent()
         return False
 
+    def _remove_group_comment(self, group: dict[str, Any]) -> None:
+        comment_id = group.get("comment_id")
+        if comment_id is None:
+            return
+        for node in list(group["paragraph"].iter()):
+            if node.tag in {w("commentRangeStart"), w("commentRangeEnd"), w("commentReference")} and node.get(w("id")) == str(comment_id):
+                parent = node.getparent()
+                parent.remove(node)
+                if parent.tag == w("r") and len(parent) == 0:
+                    parent.getparent().remove(parent)
+        if self._comments_root is not None:
+            for node in list(self._comments_root):
+                if node.get(w("id")) == str(comment_id):
+                    self._comments_root.remove(node)
+                    self.comments -= 1
+        group["comment_id"] = None
+
+    def _refresh_group(self, group: dict[str, Any], patch: dict[str, Any]) -> None:
+        """One original→latest note, not a stale original→intermediate note."""
+        insertion = next((n for n in group["nodes"] if n.tag == w("ins")), None)
+        after = "" if insertion is None else "".join(insertion.itertext(w("t")))
+        merged = group["patch"]
+        merged["replace"], merged["delete"] = after, not bool(after)
+        merged["rationale"] = _merge_reasons(merged.get("rationale"), patch.get("rationale"))
+        self._remove_group_comment(group)
+        if after == merged.get("before"):
+            # A→B→A is not a change. Restore only this group's original runs.
+            for node in group["nodes"]:
+                parent = node.getparent()
+                if node.tag == w("del"):
+                    index = parent.index(node)
+                    for child in list(node):
+                        for text_node in child.iter(w("delText")):
+                            text_node.tag = w("t")
+                        parent.insert(index, child)
+                        index += 1
+                parent.remove(node)
+            self._groups.remove(group)
+            return
+        if insertion is not None and not after:
+            insertion.getparent().remove(insertion)
+            group["nodes"].remove(insertion)
+        if self.comments_enabled:
+            group["comment_id"] = self._comment_id(_change_note(merged))
+            self._anchor_comment(group["nodes"][0].getparent(), group["nodes"], group["comment_id"])
+
     def _replace(self, change: Change) -> None:
         """真正动手：把 change.start..change.end 换成新文字，并留下痕迹与批注。"""
 
         etree = self.etree
         paragraph = change.paragraph
-        patch = change.patch
+        patch = dict(change.patch)
         new_text = str(patch.get("replace") or "")
         delete = bool(patch.get("delete"))
 
         nodes: list[Any] = []
+        if paragraph not in self._original_paragraphs:
+            pieces = [p for p in change.block.pieces if p.owner is paragraph]
+            original_text = change.block.text[pieces[0].start:pieces[-1].end]
+            self._original_paragraphs[paragraph] = (copy.deepcopy(paragraph), original_text)
+
+        previous_group = next((g for g in self._groups if any(
+            n.tag == w("ins") and n in change.first.run.iterancestors()
+            for n in g["nodes"]
+        )), None) if change.first.run is not None else None
 
         if change.full:
+            prior_groups = [g for g in self._groups if g["paragraph"] is paragraph]
+            if prior_groups:
+                # Full rewrite supersedes previous changes in this paragraph.
+                # Build its deletion from the original, never nest old del/ins.
+                original, original_text = self._original_paragraphs[paragraph]
+                for group in prior_groups:
+                    patch["rationale"] = _merge_reasons(group["patch"].get("rationale"), patch.get("rationale"))
+                    self._remove_group_comment(group)
+                    self._groups.remove(group)
+                for child in list(paragraph):
+                    paragraph.remove(child)
+                for child in original:
+                    paragraph.append(copy.deepcopy(child))
+                patch["before"] = original_text
+                if new_text == original_text and not delete:
+                    self.changes += 1
+                    return
             keep = {w("pPr"), w("sectPr")}
             affected = [child for child in list(paragraph) if child.tag not in keep]
             if not affected:
@@ -575,11 +661,14 @@ class RedlineWriter:
             for node in reversed(nodes_to_insert):
                 parent.insert(index, node)
 
-        if self.comments_enabled and nodes:
-            rationale = str(patch.get("rationale") or "").strip()
-            patch_id = str(patch.get("patch_id") or "")
-            note = f"{patch_id}：{rationale}" if rationale else patch_id
-            self._anchor_comment(parent, nodes, self._comment_id(note))
+        if nodes:
+            group = {"paragraph": paragraph, "nodes": nodes, "patch": patch, "comment_id": None}
+            if self.comments_enabled:
+                group["comment_id"] = self._comment_id(_change_note(patch))
+                self._anchor_comment(parent, nodes, group["comment_id"])
+            self._groups.append(group)
+        elif previous_group is not None:
+            self._refresh_group(previous_group, patch)
 
         self.changes += 1
 
@@ -612,12 +701,20 @@ def applied_rounds(state: Any) -> list[list[dict[str, Any]]]:
     """
 
     rounds: list[list[dict[str, Any]]] = []
+    # 用户在"写入 Word 前最后一次确认"里剔除掉的，不写进副本
+    excluded = {str(item) for item in (state.get("excluded_patch_ids") or [])}
     for entry in state.get("revision_history") or []:
         if not isinstance(entry, dict):
             continue
         applied = entry.get("applied")
         if entry.get("stage") == "apply" and applied:
-            rounds.append([dict(item) for item in applied])
+            kept = [
+                dict(item)
+                for item in applied
+                if str(item.get("patch_id") or "") not in excluded
+            ]
+            if kept:
+                rounds.append(kept)
     return rounds
 
 
@@ -742,12 +839,16 @@ def export_redline(
     author: str = DEFAULT_AUTHOR,
     date: str | None = None,
     comments: bool = True,
+    suggestions: Iterable[dict[str, Any]] = (),
 ) -> RedlineOutcome:
     """
     把若干轮的改动写回 .docx 副本。
 
     :param source_data: **原始** .docx 的字节（不是改过的文字）
     :param rounds: 每轮"已落实"的补丁（``Patch.to_json()`` 的形状）
+    :param suggestions: 不改正文、只在原地留批注的条目
+        （``advice`` = 原文没错但可以更好／涉及代码；
+        ``manual`` = 确实有问题但工具改不了，例如跨引文域）
     :param out_path: 输出路径（另存副本，原文件不动）
     """
 
@@ -766,7 +867,7 @@ def export_redline(
                 change = _locate(dict(item), source=source, spans=spans, text=text)
             except Unlocatable as exc:
                 outcome.skipped.append({**item, "reason": str(exc)})
-                if comments:
+                if comments and str(exc) != "代码内容或变量名受到保护，已跳过":
                     span = resolve_span(
                         spans,
                         span_id=str(item.get("span_id") or ""),
@@ -831,6 +932,24 @@ def export_redline(
         text = source.text
         version += 1
 
+    # 不改正文、只在原地留批注的条目（建议 / 需人工处理）。
+    # 放在所有改动写完之后：这时 source 的偏移已经稳定，锚点不会再变。
+    if comments:
+        for item in suggestions:
+            span = resolve_span(
+                build_spans(source.text, version=1),
+                span_id=str(item.get("span_id") or ""),
+                label=str(item.get("span_label") or ""),
+            )
+            paragraph = _anchor_paragraph(source, span)
+            if paragraph is None:
+                outcome.skipped.append(
+                    {**item, "reason": "找不到可挂批注的段落"}
+                )
+                continue
+            writer.note_on_paragraph(paragraph, _suggestion_note(dict(item)))
+            outcome.suggestions += 1
+
     writer._store_comments()
     source.save(out_path)
     outcome.text = source.text
@@ -847,24 +966,76 @@ def _manual_todo(item: dict[str, Any], reason: str, span: Span | None) -> str:
     有用的是：在哪一段、原文是什么、建议改成什么、为什么没自动改。
     """
 
-    lines = ["【需人工处理】这条改动没能自动写回 Word。"]
-    if span is not None:
-        where = span.label
-        if span.section and span.section != span.text:
-            where += f"（{span.section}）"
-        lines.append(f"位置：{where}")
-    location = str(item.get("location") or "").strip()
-    if location and location not in lines[-1]:
-        lines.append(f"章节：{location}")
+    return _suggestion_note(
+        {
+            **item,
+            "kind": "manual",
+            "blocked_reason": reason,
+            "suggestion": str(item.get("replace") or "").strip()
+            or ("（删除这段内容）" if item.get("delete") else ""),
+            "reason": str(item.get("rationale") or "").strip()
+            or _before_hint(item),
+        }
+    )
+
+
+def _before_hint(item: dict[str, Any]) -> str:
     before = str(item.get("before") or item.get("quote") or "").strip()
-    if before:
-        lines.append(f"原文：{before[:160]}")
-    after = str(item.get("replace") or "").strip()
-    if after:
-        lines.append(f"建议改为：{after[:160]}")
-    elif item.get("delete"):
-        lines.append("建议：删除这段内容")
-    lines.append(f"原因：{reason}")
+    return f"原文「{before[:120]}」需要作者确认" if before else ""
+
+
+def _change_note(patch: dict[str, Any]) -> str:
+    """
+    已落实的修改 → Word 批注。
+
+    一处一条：将原文改为新文，并附修改依据。不另写删除/插入说明。
+    """
+
+    before = str(patch.get("before") or patch.get("quote") or "").strip()
+    after = "" if patch.get("delete") else str(patch.get("replace") or "").strip()
+    reason = str(patch.get("rationale") or "").strip()
+
+    lines: list[str] = []
+    if before and after:
+        lines.append(f"将「{before}」改为「{after}」。")
+    elif before:
+        lines.append(f"删除「{before}」。")
+    elif after:
+        lines.append(f"添加「{after}」。")
+    if reason:
+        lines.append(f"原因：{reason}")
+    return "\n".join(lines) or "（本处有修改）"
+
+
+def _merge_reasons(*reasons: Any) -> str:
+    return "；".join(dict.fromkeys(str(r).strip() for r in reasons if str(r or "").strip()))
+
+
+def _suggestion_note(item: dict[str, Any]) -> str:
+    """
+    没落实的条目 → Word 批注。两种写法：
+
+    - ``advice``（原文没错，只是可以更好、或涉及代码）:
+      此处可以…… / 原因是：……
+    - ``manual``（确实有问题，但工具改不了，例如跨引文域）:
+      这个问题需要人工修改，因为…… / 建议修改为：…… / 原因：……
+    """
+
+    suggestion = str(item.get("suggestion") or item.get("text") or "").strip()
+    reason = str(item.get("reason") or item.get("problem") or "").strip()
+
+    if str(item.get("kind") or "advice") == "manual":
+        blocked = str(item.get("blocked_reason") or "").strip() or "工具无法安全地自动改写这一处"
+        lines = [f"这个问题需要人工修改，因为{blocked}。"]
+        if suggestion:
+            lines.append(f"建议修改为：{suggestion[:200]}")
+        if reason:
+            lines.append(f"原因：{reason[:300]}")
+        return "\n".join(lines)
+
+    lines = [f"此处可以{suggestion}" if suggestion else "此处可以再斟酌一下"]
+    if reason:
+        lines.append(f"原因是：{reason[:300]}")
     return "\n".join(lines)
 
 

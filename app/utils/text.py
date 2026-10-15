@@ -25,10 +25,154 @@ def normalize_document_text(text: str) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip() + "\n"
 
+
+def _rstrip_pairs(line: list[tuple[str, int]]) -> list[tuple[str, int]]:
+    end = len(line)
+    while end and line[end - 1][0].isspace():
+        end -= 1
+    return line[:end]
+
+
+def normalize_with_map(text: str) -> tuple[str, list[int]]:
+    """
+    做与 :func:`normalize_document_text` **完全相同**的归一化，
+    并返回 ``kept``：新文本第 i 个字符来自原文的哪个下标。
+
+    为什么要这个：归一化会**删掉字符**（行尾空白、连续空行、首尾空白）。
+    一旦删了，块/片段在"归一化前"算出来的偏移就整体左移，后面全错位。
+    有了 ``kept``，就能用二分把旧偏移搬到新坐标系：
+
+        new_offset = bisect_left(kept, old_offset)
+
+    结果**不含** ``normalize_document_text`` 补的那个结尾换行，即：
+
+        normalize_document_text(t) == normalize_with_map(t)[0] + "\\n"
+
+    ``kept`` 单调不减，因此可以直接二分。
+    """
+
+    # 1) 统一换行：\r\n / \r -> \n（换行的来源记在被消费的第一个字符上）
+    pairs: list[tuple[str, int]] = []
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "\r":
+            consumed = 2 if index + 1 < len(text) and text[index + 1] == "\n" else 1
+            pairs.append(("\n", index))
+            index += consumed
+            continue
+        pairs.append((char, index))
+        index += 1
+
+    # 2) 逐行 rstrip
+    out: list[tuple[str, int]] = []
+    line: list[tuple[str, int]] = []
+    for pair in pairs:
+        if pair[0] == "\n":
+            out.extend(_rstrip_pairs(line))
+            out.append(pair)
+            line = []
+            continue
+        line.append(pair)
+    out.extend(_rstrip_pairs(line))
+    pairs = out
+
+    # 3) \n{3,} -> \n\n
+    out = []
+    run = 0
+    for pair in pairs:
+        if pair[0] == "\n":
+            run += 1
+            if run <= 2:
+                out.append(pair)
+            continue
+        run = 0
+        out.append(pair)
+    pairs = out
+
+    # 4) 整串 strip
+    start, end = 0, len(pairs)
+    while start < end and pairs[start][0].isspace():
+        start += 1
+    while end > start and pairs[end - 1][0].isspace():
+        end -= 1
+    pairs = pairs[start:end]
+
+    return "".join(char for char, _ in pairs), [origin for _, origin in pairs]
+
+
 # 中日韩文字（粗略范围，足够做 Token 估算）
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff]")
 _WHITESPACE_RE = re.compile(r"\s+")
 _PARAGRAPH_RE = re.compile(r"\n\s*\n")
+
+# ---------------------------------------------------------------- 代码段识别
+
+# 明显的赋值、定义、函数调用和多行程序语句都属于代码。
+# 对不确定的程序片段优先保护原文；误改代码的代价高于少改一句正文。
+_CODE_KEYWORD_RE = re.compile(
+    r"^(?:def|class|for|while|if|elif|else|try|except|finally|with|return|"
+    r"import|from|raise|yield|assert|lambda|global|nonlocal|async|await)\b"
+)
+_CODE_ASSIGNMENT_RE = re.compile(
+    r"^([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*(?:=(?!=)|\+=|-=|\*=|/=)\s*\S"
+)
+
+# 单行代码：整段就是**一个标识符/常量/路径**，不含空格和中文。
+# 论文里的代码常常一行占一段（前后空行隔开），这时"多行"那条判据抓不到，
+# 于是 FEWSHOT_QUERY_DIR 这种常量名会被当成正文去改。
+_CODE_TOKEN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
+_CODE_PATH_RE = re.compile(r"^[A-Za-z0-9_./\\-]+$")
+
+
+def looks_like_code(text: str) -> bool:
+    """
+    判断一段文字是不是**代码清单**。
+
+    为什么要这个：论文里的代码是"印刷出来的清单"，工具读到的是抽取文本，
+    上下文往往不全（比如模块级常量根本没写进论文），**没有能力判断代码对不对**。
+    让它去"顺手修 bug"，只会拿猜测去改正确的代码。所以代码段一律不审、不改。
+
+    三类判据，命中任一即算代码：
+
+    1. **多行 + 程序语句**：至少一行以 Python/类 C 关键字开头，或出现 `self.`。
+    2. **单行标识符/常量/路径**：整段没有空格、没有中文，形如
+       `FEWSHOT_QUERY_DIR`、`MOCO_QUEUE_SIZE`、`data/query/`。
+    3. **单行赋值或定义**：Word 中一行代码就可能单独成段。
+
+    代码里的标识符还会在补丁校验和 Word 写回时受到独立保护。
+    """
+
+    stripped_text = text.strip()
+    if not stripped_text:
+        return False
+
+    if "\n" not in text:
+        if not _CJK_RE.search(stripped_text) and (
+            _CODE_ASSIGNMENT_RE.match(stripped_text)
+            or (stripped_text.startswith(("def ", "class ")) and ":" in stripped_text)
+        ):
+            return True
+        # 单行：只认"明显是代码标识符/路径"的
+        if len(stripped_text) < 6 or " " in stripped_text:
+            return False
+        if _CJK_RE.search(stripped_text):
+            return False
+        if "_" in stripped_text and _CODE_TOKEN_RE.match(stripped_text):
+            return True
+        return "/" in stripped_text and bool(_CODE_PATH_RE.match(stripped_text))
+
+    assignment_count = 0
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if _CODE_KEYWORD_RE.match(stripped) or "self." in stripped:
+            return True
+        if _CODE_ASSIGNMENT_RE.match(stripped):
+            assignment_count += 1
+    # Word 里的一段程序清单也可能只有连续赋值/函数调用，没有 def/for。
+    return assignment_count >= 2
 
 _HEADING_PATTERNS = (
     re.compile(r"^#{1,6}\s+\S"),

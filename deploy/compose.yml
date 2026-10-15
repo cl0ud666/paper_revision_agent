@@ -1,0 +1,127 @@
+name: paper-revision
+
+x-environment: &environment
+  PRA_WEB_DATABASE_URL: postgresql+psycopg://paper_agent:${POSTGRES_PASSWORD:?Generate deploy/.env first}@postgres:5432/paper_agent
+  PRA_CHECKPOINT_BACKEND: postgres
+  PRA_CHECKPOINT_URL: postgresql://paper_agent:${POSTGRES_PASSWORD}@postgres:5432/paper_agent
+  PRA_REDIS_URL: redis://:${REDIS_PASSWORD:?Generate deploy/.env first}@redis:6379/0
+  PRA_STORAGE_BACKEND: s3
+  PRA_S3_ENDPOINT: http://minio:9000
+  PRA_S3_BUCKET: papers
+  PRA_S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+  PRA_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+  PRA_PUBLIC_ORIGIN: ${PRA_PUBLIC_ORIGIN:-http://localhost:8080}
+  PRA_COOKIE_SECURE: ${PRA_COOKIE_SECURE:-0}
+  PRA_DEFAULT_DAILY_RUNS: ${PRA_DEFAULT_DAILY_RUNS:-5}
+  PRA_DEFAULT_RUN_TOKENS: ${PRA_DEFAULT_RUN_TOKENS:-400000}
+  PRA_LLM_CONCURRENCY: "6"
+  PRA_BUDGET_RUN_TOKENS: "0"
+  PRA_BUDGET_TURN_TOKENS: "0"
+  PRA_BUDGET_RUN_SECONDS: "1800"
+  PRA_BUDGET_CALLS_PER_AGENT: "40"
+  PRA_PATCH_GATE: "0"
+  PRA_ISSUE_GATE: "1"
+  PRA_FINAL_CONFIRM: "1"
+  PRA_DOCX_OUTPUT: "1"
+  PRA_LOG_LLM: "0"
+  PRA_RUNS_DIR: /app/data/runs
+  PRA_WEB_DEMO: ${PRA_WEB_DEMO:-0}
+
+x-backend: &backend
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  environment: *environment
+  volumes:
+    - workspace:/app/data/runs
+  restart: unless-stopped
+  depends_on:
+    bootstrap:
+      condition: service_completed_successfully
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: paper_agent
+      POSTGRES_USER: paper_agent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paper_agent -d paper_agent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+  minio:
+    build:
+      context: ..
+      dockerfile: deploy/minio.Dockerfile
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio-data:/data
+    restart: unless-stopped
+  bootstrap:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      <<: *environment
+      PRA_ADMIN_USERNAME: ${PRA_ADMIN_USERNAME}
+      PRA_ADMIN_PASSWORD: ${PRA_ADMIN_PASSWORD}
+    command: python -m app.web.manage bootstrap
+    volumes:
+      - workspace:/app/data/runs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+  api:
+    <<: *backend
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+  worker:
+    <<: *backend
+    env_file:
+      - ../.env
+    command: celery -A app.web.queue:celery_app worker --loglevel=INFO --concurrency=2 --pool=prefork
+  dispatcher:
+    <<: *backend
+    command: python -m app.web.dispatcher
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/frontend.Dockerfile
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  workspace:

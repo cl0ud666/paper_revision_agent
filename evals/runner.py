@@ -28,7 +28,7 @@ from typing import Any, Callable
 from app.config import get_settings
 from app.utils.llm import describe_configuration
 from app.utils.tracing import get_recorder
-from app.workflow.harness import Harness
+from app.workflow.harness import Harness, new_run_id
 from evals.judges import DIMENSIONS, judge_pair
 
 REQUEST_TEMPLATE = (
@@ -86,7 +86,7 @@ def evaluate_item(
 
     factory = harness_factory or Harness
     harness = factory(auto_approve=True, logger=lambda message: None)
-    result = harness.run_to_completion(request, text, run_id=f"eval-{item.get('id')}")
+    result = harness.run_to_completion(request, text, run_id=new_run_id(f"eval-{item.get('id')}"))
 
     revised = result.revised_document or text
     recorder = get_recorder(harness.run_id)

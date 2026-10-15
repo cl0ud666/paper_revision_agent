@@ -20,13 +20,18 @@ from pathlib import Path
 
 from app.agents import audit as audit_agent
 from app.agents import revision as revision_agent
-from app.agents.prompts import AUDIT_HEADER, REVISION_HEADER
+from app.agents.prompts import AUDIT_HEADER, NAME_CHECK_HEADER, REVISION_HEADER
 from app.config import reset_settings
 from app.utils.llm import reset_llm_factory, set_llm_factory
 from app.utils.resilience import reset_guards
 from app.utils.tracing import reset_recorders
 from app.workflow.graph import reset_checkpointers
-from tests.fakes import audit_response, fake_factory, patch_response
+from tests.fakes import (
+    audit_response,
+    fake_factory,
+    name_check_response,
+    patch_response,
+)
 
 DOC = """# 论文标题
 
@@ -110,6 +115,137 @@ class TestEvidenceVerification(AuditPrecisionTestCase):
         )
         self.assertEqual(len(update["audit_findings"]), 1)
         self.assertEqual(update["audit_meta"]["dropped_unverifiable"], 0)
+
+
+class TestNameCheck(AuditPrecisionTestCase):
+    """
+    专名核验：**正确写法不需要在文中出现过**。
+
+    "阿里云 ESC"应为 ECS——这是世界知识，不是前后文比对：
+    全篇只写了一次错字、正确写法一次都没出现，也必须能报出来。
+    """
+
+    TYPO_DOC = (
+        "# 论文标题\n\n"
+        "## 摘要\n\n"
+        "本文提出的方法在大规模图上进行了验证，效果良好，值得推广。\n\n"
+        "## 3 实验\n\n"
+        "全部实验在阿里云 ESC 上完成，使用 4 张显卡训练了三天。\n"
+    )
+
+    def run_audit_with(self, suspected, **overrides) -> tuple[dict, list]:
+        calls: list[dict] = []
+        set_llm_factory(
+            fake_factory(
+                {
+                    AUDIT_HEADER: audit_response([]),
+                    NAME_CHECK_HEADER: name_check_response(suspected),
+                },
+                calls=calls,
+            )
+        )
+        state = {
+            "run_id": "name-check-test",
+            "current_document": overrides.pop("document", self.TYPO_DOC),
+            "document_version": 1,
+            "user_request": "全面检查",
+            **overrides,
+        }
+        return audit_agent.run(state, logger=lambda message: None), calls
+
+    def test_typo_without_any_correct_form_is_reported(self) -> None:
+        """全篇只有一处 ESC、没有 ECS——靠世界知识也要报出来。"""
+
+        update, calls = self.run_audit_with(
+            [
+                {
+                    "name": "ESC",
+                    "correct": "ECS",
+                    "reason": "阿里云的弹性计算服务官方名称是 ECS",
+                    "confidence": "high",
+                }
+            ],
+            document=self.TYPO_DOC,  # 文中没有 ECS
+        )
+
+        # 确实发起了专名核验这一次调用
+        self.assertIn(NAME_CHECK_HEADER, [call["header"] for call in calls])
+        findings = update["audit_findings"]
+        self.assertEqual(len(findings), 1)
+        issue = findings[0]
+        self.assertEqual(issue["category"], "专有名词")
+        self.assertIn("ECS", issue["problem"])
+        self.assertIn("阿里云 ESC", issue["evidence"])  # 证据逐字来自原文
+        self.assertEqual(issue["source"], "name_check")
+        self.assertEqual(update["audit_meta"]["name_check_found"], 1)
+
+    def test_invented_name_is_rejected(self) -> None:
+        """模型报一个清单里根本没出现的词 → 丢弃（防幻觉）。"""
+
+        update, _ = self.run_audit_with(
+            [
+                {
+                    "name": "FROB",
+                    "correct": "PROB",
+                    "reason": "编造的词",
+                    "confidence": "high",
+                }
+            ]
+        )
+        self.assertEqual(update["audit_findings"], [])
+
+    def test_low_confidence_is_dropped(self) -> None:
+        update, _ = self.run_audit_with(
+            [
+                {
+                    "name": "ESC",
+                    "correct": "ECS",
+                    "reason": "好像不太对",
+                    "confidence": "low",
+                }
+            ]
+        )
+        self.assertEqual(update["audit_findings"], [])
+
+    def test_document_without_names_skips_the_extra_call(self) -> None:
+        plain = "## 摘要\n\n本文提出了一个新的方法，效果比较好。\n"
+        update, calls = self.run_audit_with([], document=plain)
+        self.assertNotIn(NAME_CHECK_HEADER, [call["header"] for call in calls])
+        self.assertEqual(update["audit_findings"], [])
+
+    def test_contrast_inside_the_paper_is_caught_without_the_model(self) -> None:
+        """文中既有 ESC 又有 ECS：确定性比对就够了，不依赖模型判断。"""
+
+        document = (
+            "## 3 实验\n\n"
+            "全部实验在阿里云 ECS 上完成，使用 4 张显卡训练了三天。\n\n"
+            "推理同样在阿里云 ECS 上完成，批量大小为 32。\n\n"
+            "## 4 讨论\n\n"
+            "部署环境为阿里云 ESC，成本较低。\n"
+        )
+        update, _ = self.run_audit_with([], document=document)
+        findings = update["audit_findings"]
+        self.assertEqual(len(findings), 1)
+        self.assertIn("ESC", findings[0]["problem"])
+        self.assertIn("ECS", findings[0]["problem"])
+
+    def test_flag_can_turn_the_check_off(self) -> None:
+        os.environ["PRA_AUDIT_NAME_CHECK"] = "0"
+        reset_settings()
+        try:
+            update, calls = self.run_audit_with(
+                [],
+                document=(
+                    "## 3 实验\n\n全部实验在阿里云 ECS 上完成，使用 4 张显卡。\n\n"
+                    "推理同样在阿里云 ECS 上完成，批量大小为 32。\n\n"
+                    "## 4 讨论\n\n部署环境为阿里云 ESC，成本较低。\n"
+                ),
+            )
+        finally:
+            os.environ.pop("PRA_AUDIT_NAME_CHECK", None)
+            reset_settings()
+        self.assertNotIn(NAME_CHECK_HEADER, [call["header"] for call in calls])
+        self.assertEqual(update["audit_findings"], [])
 
 
 class TestSeverityThreshold(AuditPrecisionTestCase):

@@ -7,6 +7,14 @@ __pycache__/
 
 # Environment variables
 .env
+deploy/.env
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+frontend/*.tsbuildinfo
+data/web-storage/
+data/verification-temp/
 
 # IDE
 .idea/

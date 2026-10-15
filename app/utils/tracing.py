@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -81,6 +81,17 @@ class TraceRecorder:
         self.path = path
         self._events: list[TraceRecord] = []
         self._lock = threading.Lock()
+        if self.path is not None and self.path.exists():
+            allowed = {item.name for item in fields(TraceRecord)}
+            try:
+                for line in self.path.read_text(encoding="utf-8").splitlines():
+                    try:
+                        record = json.loads(line)
+                        self._events.append(TraceRecord(**{k: v for k, v in record.items() if k in allowed}))
+                    except (ValueError, TypeError, AttributeError):
+                        continue
+            except OSError:
+                pass
 
     # ---------- 记录 ----------
 

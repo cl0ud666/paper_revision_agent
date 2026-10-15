@@ -205,6 +205,30 @@ class TestRedline(unittest.TestCase):
         self.data = build_paper()
         self.text = DocxSource(self.data).text
 
+    def test_old_applied_code_patch_is_blocked_at_word_export(self) -> None:
+        document = Document()
+        document.add_paragraph(
+            "query_data, query_labels = fs_dataset.load_query_set(FEWSHOT_QUERY_DIR)\n"
+            "known_count = len(query_data)"
+        )
+        data = io.BytesIO()
+        document.save(data)
+        source_text = DocxSource(data.getvalue()).text
+        span = next(s for s in build_spans(source_text) if "FEWSHOT_QUERY_DIR" in s.text)
+        start = span.text.index("FEWSHOT_QUERY_DIR")
+        stale_patch = Patch(
+            "patch-older", span.id, span_label=span.label,
+            quote="FEWSHOT_QUERY_DIR", before="FEWSHOT_QUERY_DIR",
+            replace="fewshot_query_dir", status=STATUS_APPLIED,
+            start_in_span=start, end_in_span=start + len("FEWSHOT_QUERY_DIR"),
+        )
+        result, output = export(data.getvalue(), [[stale_patch.to_json()]])
+        self.assertEqual(result.applied, [])
+        self.assertEqual(len(result.skipped), 1)
+        self.assertIn("代码内容或变量名受到保护", result.skipped[0]["reason"])
+        self.assertEqual(DocxSource(output).text, source_text)
+        self.assertNotIn("fewshot_query_dir", part(output, "word/document.xml"))
+
     def test_simple_replacement_becomes_tracked_change(self) -> None:
         new_text, rounds = applied_round(
             self.text,
@@ -304,12 +328,11 @@ class TestRedline(unittest.TestCase):
         self.assertEqual(result.applied, [])
         self.assertEqual(len(result.skipped), 1)
         self.assertIn("公式", result.skipped[0]["reason"])
-        # 被拒绝的改动会在原地留一条"能照着做"的批注：位置 + 原文 + 建议 + 原因
+        # 写不回的改动会在原地留一条"能照着做"的批注：
+        # 这个问题需要人工修改，因为…… / 建议修改为：…… / 原因：……
         comments = part(out_bytes, "word/comments.xml")
-        self.assertIn("需人工处理", comments)
-        self.assertIn("位置：", comments)
-        self.assertIn("原文：", comments)
-        self.assertIn("建议改为：", comments)
+        self.assertIn("这个问题需要人工修改，因为", comments)
+        self.assertIn("建议修改为：", comments)
         self.assertIn("原因：", comments)
         self.assertIn("定义为交叉熵损失", comments)  # 建议改成什么
         # 摘要里也能看到"哪一条、在哪、原文与建议"
@@ -372,6 +395,102 @@ class TestRedline(unittest.TestCase):
         result, _ = export(self.data, [round_one, round_two])
         self.assertEqual(len(result.applied), 2, result.skipped)
         self.assertEqual(result.text, after_second)
+
+    def test_replacement_comment_is_one_original_to_final_statement(self):
+        from lxml import etree
+        from app.document.docx_model import w
+        for paragraph, intermediate, final in (
+            ("本文采用 MoCo 方法。", "Moco", "MOCO"),
+            ("MoCo", "Moco", "MOCO"),
+            ("本文采用 MoCo 方法。", "Moco", "MoCo"),
+            ("MoCo", "Moco", "MoCo"),
+        ):
+            with self.subTest(paragraph=paragraph, final=final):
+                document = Document()
+                document.add_paragraph(paragraph)
+                raw = io.BytesIO()
+                document.save(raw)
+                text = DocxSource(raw.getvalue()).text
+                first_text, first = applied_round(text, label="P01", quote="MoCo", replace=intermediate)
+                final_text, second = applied_round(first_text, label="P01", quote=intermediate, replace=final)
+                outcome, output = export(raw.getvalue(), [first, second])
+                self.assertEqual(outcome.skipped, [])
+                self.assertEqual(outcome.text, final_text)
+                root = etree.fromstring(part(output, "word/document.xml").encode())
+                comments = etree.fromstring(part(output, "word/comments.xml").encode())
+                expected = 0 if final == "MoCo" else 1
+                self.assertEqual(len(list(comments.iter(w("comment")))), expected)
+                self.assertEqual(len(list(root.iter(w("del")))), expected)
+                self.assertEqual(len(list(root.iter(w("ins")))), expected)
+                if expected:
+                    self.assertIn("将「MoCo」改为「MOCO」。", "".join(comments.itertext()))
+                    self.assertNotIn("Moco", "".join(comments.itertext()))
+                # Reject ALL parts of the replacement restores original;
+                # accepting all gives final. Deleting comments is not rejection.
+                for accept in (False, True):
+                    projected = etree.fromstring(etree.tostring(root))
+                    for node in list(projected.iter()):
+                        if node.tag not in {w("del"), w("ins")}:
+                            continue
+                        parent = node.getparent()
+                        keep = (node.tag == w("ins")) == accept
+                        if keep:
+                            index = parent.index(node)
+                            for child in list(node):
+                                parent.insert(index, child)
+                                index += 1
+                        parent.remove(node)
+                    content = "".join(n.text or "" for n in projected.iter() if n.tag in {w("t"), w("delText")})
+                    self.assertEqual(content, (final_text if accept else text).rstrip("\n"))
+
+    def test_full_rewrite_after_partial_edit_has_no_nested_revisions(self):
+        from lxml import etree
+        from app.document.docx_model import w
+        first_text, first = applied_round(self.text, label="P01", quote="更好的效果", replace="更稳定的效果")
+        replacement = "本文方法在三个公开数据集上取得稳定提升。"
+        _, second = applied_round(first_text, label="P01", quote=BODY.replace("更好的效果", "更稳定的效果"), replace=replacement)
+        result, output = export(self.data, [first, second])
+        self.assertEqual(result.skipped, [])
+        root = etree.fromstring(part(output, "word/document.xml").encode())
+        self.assertEqual(len(list(root.iter(w("del")))), 1)
+        self.assertEqual(len(list(root.iter(w("ins")))), 1)
+        self.assertEqual(result.comments, 1)
+        self.assertIn(f"将「{BODY}」改为「{replacement}」。", part(output, "word/comments.xml"))
+
+    def test_consolidation_preserves_preexisting_comments_and_anchor_ids(self):
+        from lxml import etree
+        from app.document.docx_model import w
+        from app.document.docx_redline import RedlineWriter
+        source = DocxSource(self.data)
+        writer = RedlineWriter(source)
+        paragraph = next(p for p in source.document_root.iter(w("p")) if BODY in "".join(p.itertext(w("t"))))
+        writer.note_on_paragraph(paragraph, "作者原有批注，不应被删除")
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "original.docx"
+            source.save(str(path))
+            original = path.read_bytes()
+        text, first = applied_round(self.text, label="P01", quote="更好的效果", replace="更稳定的效果")
+        _, second = applied_round(text, label="P01", quote=BODY.replace("更好的效果", "更稳定的效果"), replace="本文方法在三个公开数据集上取得稳定提升。")
+        result, output = export(original, [first, second])
+        self.assertEqual(result.comments, 1)
+        root = etree.fromstring(part(output, "word/document.xml").encode())
+        comments = etree.fromstring(part(output, "word/comments.xml").encode())
+        self.assertEqual(len(list(comments.iter(w("comment")))), 2)
+        self.assertIn("作者原有批注，不应被删除", "".join(comments.itertext()))
+        ids = {n.get(w("id")) for n in comments.iter(w("comment"))}
+        for tag in ("commentRangeStart", "commentRangeEnd", "commentReference"):
+            anchors = [n.get(w("id")) for n in root.iter(w(tag))]
+            self.assertEqual(set(anchors), ids)
+            self.assertEqual(len(anchors), len(ids))
+
+    def test_round_trip_without_comments_also_removes_noop_revisions(self):
+        text, first = applied_round(self.text, label="P01", quote="更好的效果", replace="更稳定的效果")
+        _, second = applied_round(text, label="P01", quote="更稳定的效果", replace="更好的效果")
+        result, output = export(self.data, [first, second], comments=False)
+        self.assertEqual(result.text, self.text)
+        self.assertEqual(result.comments, 0)
+        self.assertNotIn("<w:ins", part(output, "word/document.xml"))
+        self.assertNotIn("<w:del", part(output, "word/document.xml"))
 
     def test_many_changes_in_one_paragraph(self) -> None:
         """
@@ -597,6 +716,218 @@ class TestReplay(unittest.TestCase):
         from app.document.docx_redline import applied_rounds
 
         self.assertEqual(applied_rounds({}), [])
+
+
+def add_ref_field(paragraph, instruction: str, result: str) -> None:
+    """
+    在段落里插入一个 Word 域（begin / instrText / separate / 结果 / end）。
+
+    完全照搬论文里引文序号的样子——[4] 这类不是打上去的字符，
+    而是 REF 交叉引用域，改它要同步后面的参考文献。
+    """
+
+    from docx.oxml.ns import qn
+
+    def fld(char_type: str):
+        element = OxmlElement("w:fldChar")
+        element.set(qn("w:fldCharType"), char_type)
+        paragraph.add_run()._element.append(element)
+
+    fld("begin")
+    instr = OxmlElement("w:instrText")
+    instr.set(qn("xml:space"), "preserve")
+    instr.text = instruction
+    paragraph.add_run()._element.append(instr)
+    fld("separate")
+    paragraph.add_run(result)
+    fld("end")
+
+
+def docx_with_citation_field() -> bytes:
+    """正文里带一个引文域：Transformer[4]、GNN——[4] 是 REF 域。"""
+
+    document = Document()
+    document.add_paragraph("近年的研究。")
+    paragraph = document.add_paragraph()
+    paragraph.add_run("研究者们尝试运用Transformer")
+    add_ref_field(paragraph, " REF _Ref25657 \\r \\h ", "[4]")
+    paragraph.add_run("、GNN等网络结构，用于提取语义特征。")
+
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def docx_with_blank_line_run() -> bytes:
+    """
+    构造一份"归一化会删字符"的文档。
+
+    代码段里有三个连续换行（``a<break><break><break>b``）。
+    整篇归一化会把 ``\\n{3,}`` 压成 ``\\n\\n``——**删掉一个字符**，
+    于是它后面所有块的偏移整体左移。这正是线上那份 217 个块错位的成因。
+    """
+
+    document = Document()
+    document.add_heading("1 引言", level=2)
+    document.add_paragraph("第一段文字。")
+
+    code = document.add_paragraph()
+    code.add_run("a")
+    code.add_run().add_break()
+    code.add_run().add_break()
+    code.add_run().add_break()
+    code.add_run("b")
+
+    document.add_heading("2 方法", level=2)
+    document.add_paragraph("第二段文字。")
+    document.add_paragraph("第三段文字。")
+
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+@unittest.skipUnless(HAS_DOCX, "未安装 python-docx / lxml")
+class TestBlockAlignment(unittest.TestCase):
+    """
+    块的偏移必须与扁平文本自洽。
+
+    历史 bug：``block.start/end`` 按**归一化前**的长度累加，而 ``self.text``
+    是归一化**之后**的文本。归一化会删字符（连续空行、行尾空白、首尾空白），
+    删了之后后面所有块的偏移整体左移，
+    ``block_at(span.start)`` 就会拿到前一个块，让回写层误报
+    "这条改动跨了文档结构，需要人工处理"——而补丁本身明明只是句内改字。
+    """
+
+    def setUp(self) -> None:
+        self.data = docx_with_blank_line_run()
+        self.source = DocxSource(self.data)
+
+    def test_text_is_unchanged_by_the_fix(self) -> None:
+        """安全底线：归一化改成逐块做之后，模型看到的文本必须逐字节不变。"""
+
+        from app.utils.text import normalize_document_text
+
+        raw = [block.text for block in self.source._collect_blocks()]
+        self.assertEqual(
+            self.source.text,
+            normalize_document_text("\n\n".join(raw)),
+        )
+
+    def test_fixture_really_shrinks_under_normalization(self) -> None:
+        """
+        确认这份样本**真的**会触发"归一化删字符"。
+
+        没有这条，上面的对齐测试可能在原地空转：
+        如果样本本身不触发删除，旧代码也不会错位，测试就抓不到这个 bug。
+        """
+
+        from app.utils.text import normalize_document_text
+
+        raw = [block.text for block in self.source._collect_blocks()]
+        joined = "\n\n".join(raw)
+        # normalize_document_text 正常会补一个结尾换行；被删过字符就会小于 len+1
+        self.assertLess(
+            len(normalize_document_text(joined)),
+            len(joined) + 1,
+            "样本没有触发归一化删字符，测试是空转",
+        )
+
+    def test_every_block_offset_matches_its_own_text(self) -> None:
+        for block in self.source.blocks:
+            self.assertEqual(
+                self.source.text[block.start : block.start + len(block.text)],
+                block.text,
+                f"块 {block.index} 的偏移与文本对不上",
+            )
+
+    def test_no_misaligned_block_warning(self) -> None:
+        self.assertFalse(
+            [w for w in self.source.warnings if "无法与原文对齐" in w],
+            self.source.warnings,
+        )
+
+    def test_pieces_still_point_at_the_same_text(self) -> None:
+        """每个片段的偏移搬过去之后，取出来的还得是它原来那段文字。"""
+
+        for block in self.source.blocks:
+            for piece in block.pieces:
+                self.assertEqual(
+                    block.text[piece.start : piece.end],
+                    piece.rendered,
+                    f"块 {block.index} 的片段偏移错位",
+                )
+
+    def test_patch_after_the_shifted_part_is_still_writable(self) -> None:
+        """端到端：在漂移点**之后**的段落上，普通正文补丁必须还能写回 Word。"""
+
+        spans = build_spans(self.source.text)
+        target = next(span for span in spans if "第三段文字" in span.text)
+
+        _new_text, rounds = applied_round(
+            self.source.text,
+            label=target.label,
+            quote="第三段文字",
+            replace="第三段内容",
+        )
+        result, out_bytes = export(self.data, [rounds])
+
+        self.assertEqual(result.skipped, [], "补丁被误判为无法写回")
+        self.assertEqual(len(result.applied), 1)
+        self.assertIn("第三段内容", DocxSource(out_bytes).text)
+
+
+@unittest.skipUnless(HAS_DOCX, "未安装 python-docx / lxml")
+class TestCitationFields(unittest.TestCase):
+    """
+    引文序号（[4]、[5]）是 Word 交叉引用域，不是普通文字。
+
+    规则：**改动范围只要碰到引文域，一律不改**，改成报告，
+    原因写清楚"需要同步后面文献引用"——因为改引文要连带改参考文献编号，
+    机器判断不了，只能交给人。
+    """
+
+    def setUp(self) -> None:
+        self.data = docx_with_citation_field()
+        self.text = DocxSource(self.data).text
+
+    def test_field_result_is_read_as_plain_text(self) -> None:
+        self.assertIn("Transformer[4]、GNN等网络结构", self.text)
+
+    def test_change_spanning_the_field_is_refused_with_the_citation_reason(self) -> None:
+        spans = build_spans(self.text)
+        target = next(span for span in spans if "Transformer[4]" in span.text)
+
+        _new_text, rounds = applied_round(
+            self.text,
+            label=target.label,
+            quote="Transformer[4]、GNN等",
+            replace="Transformer[4]、KNN等",
+        )
+        result, _out = export(self.data, [rounds])
+
+        self.assertEqual(result.applied, [])
+        self.assertEqual(len(result.skipped), 1)
+        self.assertIn(
+            "这条改动需要同步后面文献引用", result.skipped[0]["reason"]
+        )
+
+    def test_change_before_the_field_is_still_writable(self) -> None:
+        """不碰域的改动照旧能写回——不能因为文档里有引文就整体摆烂。"""
+
+        spans = build_spans(self.text)
+        target = next(span for span in spans if "近年的研究" in span.text)
+
+        _new_text, rounds = applied_round(
+            self.text,
+            label=target.label,
+            quote="近年的研究",
+            replace="近年来的研究",
+        )
+        result, out_bytes = export(self.data, [rounds])
+
+        self.assertEqual(result.skipped, [])
+        self.assertIn("近年来的研究", DocxSource(out_bytes).text)
 
 
 if __name__ == "__main__":

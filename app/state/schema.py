@@ -45,6 +45,15 @@ class Issue(TypedDict, total=False):
     """Audit / Review 输出的结构化问题。"""
 
     id: int
+    # fix（确实写错，自动改）/ decision（前后冲突，要作者拍板）/
+    # advice（没写错但可以更好、以及所有代码问题，只写批注）
+    kind: str
+    # kind=decision 时给出的可选项（2~3 条），让作者直接挑一个
+    options: list[str]
+    # 同一条问题涉及的**全部位置**。
+    # "不重复报"指的是同一个问题只写一遍，**不是**标号只能有一个——
+    # 一个术语在多处写法不一致，就是一条问题带多个标号。
+    span_labels: list[str]
     category: str
     severity: str
     location: str
@@ -100,6 +109,7 @@ class PaperState(TypedDict, total=False):
     current_document: str
     # 原始 .docx 的路径：改完要写回它（另存副本），所以必须留住"原文件"
     source_docx: str
+    input_warnings: list[str]
 
     # ---------- Orchestrator ----------
     plan_kind: str  # full_review / direct_revision / replan
@@ -143,6 +153,12 @@ class PaperState(TypedDict, total=False):
     # 用户要求与决定的统一存储（带编号、可撤改、跨轮持久）
     # 例如：{"id": "R1", "kind": "rule", "text": "全文统一把「土豆」写成「马铃薯」", ...}
     user_rules: list[dict[str, Any]]
+    # 用户是否已经对"前后矛盾"拍过板。
+    # 必须在这里声明：LangGraph 只保留 State 里声明过的字段，
+    # 没声明的键会被**静默丢弃**（曾经因此让决策闸门反复触发）。
+    decisions: bool
+    # 用户在"写入 Word 前的最后一次确认"里剔除掉的补丁编号（不写进 Word）
+    excluded_patch_ids: list[str]
     # 兼容字段：active 要求的纯文本列表（旧代码 / 报告仍在读）
     human_constraints: list[str]
     human_feedback: str

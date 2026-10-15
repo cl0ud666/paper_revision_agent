@@ -63,6 +63,10 @@ class WorkflowTestCase(unittest.TestCase):
         os.environ["PRA_DATA_DIR"] = str(self.tmp_dir)
         os.environ["PRA_RETRY_MAX_ATTEMPTS"] = "1"
         os.environ["PRA_RETRY_BASE_DELAY"] = "0"
+        # 这个文件验证的是**交互式**流程，所以把两道闸门打开
+        os.environ["PRA_PATCH_GATE"] = "1"
+        # 写 Word 前的那次确认对这里的断言没意义，关掉
+        os.environ["PRA_FINAL_CONFIRM"] = "0"
         reset_settings()
         reset_guards()
         reset_recorders()
@@ -168,13 +172,8 @@ class TestHappyPath(WorkflowTestCase):
         harness = Harness(logger=lambda message: None)
         result = harness.start("请全面检查并修改这篇论文。", DOC)
 
-        # 第一道闸门：问题闸门（有没有要忽略的）
-        self.assertTrue(result.is_interrupted)
-        self.assertEqual(result.pending_request["type"], "issue_review")
-        self.assertEqual([issue["id"] for issue in result.pending_request["issues"]], [1])
-        result = harness.resume({"ignore_ids": []})  # 都要改
-
-        # 第二道闸门：补丁审阅（一次看完全部改动）
+        # 唯一的闸门：补丁审阅（问题清单不再问"有没有要忽略的"，
+        # 写错的问题直接进 Revision，这里一次看完全部改动）
         self.assertTrue(result.is_interrupted)
         request = result.pending_request
         self.assertEqual(request["type"], "patch_review")
@@ -226,10 +225,7 @@ class TestHappyPath(WorkflowTestCase):
         result = harness.start("请全面检查并修改这篇论文。", DOC)
         self.assertTrue(result.is_interrupted)
 
-        # 问题闸门：都不忽略
-        result = harness.resume({"ignore_ids": []})
         self.assertEqual(result.pending_request["type"], "patch_review")
-
         result = harness.resume({"reject_all": True})
 
         self.assertEqual(result.status, "completed")
@@ -264,34 +260,106 @@ class TestHappyPath(WorkflowTestCase):
         )
 
         harness = Harness(logger=lambda message: None)
-        result = harness.start("请全面检查并修改这篇论文。", DOC)
+        self.assertIsNotNone(harness)  # 保持与其他用例一致的构造方式
 
-        self.assertEqual(result.pending_request["type"], "issue_review")
-        # 全部忽略 + 顺手加一条要求
-        result = harness.resume(
+        # 忽略机制**保留**（只是不再在闸门里问用户"要忽略哪些"）。
+        # 这里直接验证机制本身：给出 ignore 决定后，问题被标成 ignored，
+        # 并生成一条可跨轮识别的 ignore 规则（下一轮不会再问同一批问题）。
+        from app.workflow.nodes import normalize_issue_payload
+
+        findings = [
             {
-                "ignore_all": True,
-                "rules": ["全文统一把「土豆」写成「马铃薯」"],
+                "id": 1,
+                "span_label": "P01",
+                "category": "学术规范",
+                "problem": "参考文献格式不统一",
+            },
+            {
+                "id": 2,
+                "span_label": "P02",
+                "category": "语言表达",
+                "problem": "表达冗余",
+            },
+        ]
+        update = normalize_issue_payload(
+            {"ignore_ids": [1], "rules": ["全文统一把「土豆」写成「马铃薯」"]},
+            findings,
+            rules=[],
+            turn=1,
+        )
+
+        marked = {issue["id"]: issue.get("ignored") for issue in update["audit_findings"]}
+        self.assertTrue(marked[1])          # 被点名的忽略
+        self.assertFalse(marked.get(2))     # 没点名的不动
+
+        kinds = {rule["kind"] for rule in update["user_rules"]}
+        self.assertEqual(kinds, {"ignore", "rule"})
+        texts = " ".join(rule["text"] for rule in update["user_rules"])
+        self.assertIn("马铃薯", texts)
+        self.assertIn("不改 P01", texts)
+
+
+class TestDecisionGate(WorkflowTestCase):
+    """
+    **只有"前后矛盾、必须作者拍板"的问题**才停下来问用户。
+
+    这里盯的是一个真实踩过的坑：`audit` 节点误把 `decisions` 标成 True，
+    导致路由以为"已经问过"，决策闸门被整个跳过——用户根本没被问，
+    Revision 就自己替用户做了决定（删限定语、改数值口径）。
+    """
+
+    def _install(self, kind: str):
+        self.install(
+            {
+                ORCHESTRATOR_HEADER: plan_response("audit"),
+                AUDIT_HEADER: audit_response(
+                    [
+                        {
+                            "span_label": "P01",
+                            "kind": kind,
+                            "category": "实验分析",
+                            "severity": "high",
+                            "problem": "温度系数在正文与参数表中不一致",
+                            "evidence": ISSUE_SENTENCE,
+                            "suggestion": "请作者确认以哪一处为准",
+                        }
+                    ]
+                ),
+                REVISION_HEADER: patch_response([]),
+                REVIEW_HEADER: review_response("pass"),
             }
         )
 
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(result.state["audit_findings"][0]["ignored"], True)
-        self.assertEqual(result.state["applied_patches"], [])
-        self.assertEqual(result.revised_document, DOC)
+    def test_decision_issue_pauses_and_answer_reaches_revision(self) -> None:
+        self._install("decision")
+        harness = Harness(logger=lambda message: None)
+        result = harness.start("请全面检查并修改这篇论文。", DOC)
 
-        rules = result.state["user_rules"]
-        kinds = {rule["kind"] for rule in rules}
-        self.assertEqual(kinds, {"ignore", "rule"})
-        texts = " ".join(rule["text"] for rule in rules)
-        self.assertIn("马铃薯", texts)
-        self.assertIn("不改 P01", texts)
-        # 报告里能看到这些要求与决定
-        self.assertIn("用户要求与决定", result.final_report)
-        self.assertIn("按用户要求忽略的问题", result.final_report)
+        self.assertTrue(result.is_interrupted, "决策闸门没有停下来")
+        self.assertEqual(result.pending_request["type"], "issue_review")
+        self.assertEqual(
+            [issue["id"] for issue in result.pending_request["issues"]], [1]
+        )
+
+        # 用户的判断会被记成规则，Revision 拿得到
+        result = harness.resume({"rules": ["温度系数以 0.07 为准"]})
+        self.assertTrue(result.state["decisions"])
+        self.assertIn("0.07", result.state["user_rules"][0]["text"])
+
+    def test_plain_fix_goes_straight_to_revision(self) -> None:
+        """写错的问题（fix）不该打扰用户，直接进 Revision。"""
+
+        self._install("fix")
+        harness = Harness(logger=lambda message: None)
+        result = harness.start("请全面检查并修改这篇论文。", DOC)
+
+        self.assertTrue(result.is_interrupted)
+        self.assertEqual(result.pending_request["type"], "patch_review")
+        # audit 节点绝不能替用户把"已经问过"标上
+        self.assertFalse(result.state.get("decisions"))
 
 
-class TestReplanning(WorkflowTestCase):
+class TestReplanningImpl(WorkflowTestCase):
     def test_review_fail_triggers_replanning_until_cap(self) -> None:
         calls = {"count": 0}
 

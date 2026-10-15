@@ -106,6 +106,9 @@ class ServiceTestCase(unittest.TestCase):
         os.environ["PRA_CHECKPOINT_DB"] = str(self.tmp_dir / "checkpoints" / "test.sqlite")
         os.environ["PRA_MAX_CONCURRENT_RUNS"] = "2"
         os.environ["PRA_RETRY_MAX_ATTEMPTS"] = "1"
+        # 这个文件验证的是"暂停→恢复"，需要补丁闸门存在
+        os.environ["PRA_PATCH_GATE"] = "1"
+        os.environ["PRA_FINAL_CONFIRM"] = "0"
         reset_settings()
         reset_guards()
         reset_recorders()
@@ -151,16 +154,7 @@ class TestRunLifecycle(ServiceTestCase):
         snapshot = session.snapshot()
         self.assertEqual(snapshot["status"], STATUS_AWAITING)
         self.assertEqual(snapshot["stage"], "awaiting_human")
-        # 第一道闸门：问题清单（有没有要忽略的）
-        self.assertEqual(snapshot["pending"]["type"], "issue_review")
-        self.assertEqual(len(snapshot["pending"]["issues"]), 1)
-        self.assertEqual(snapshot["pending"]["issues"][0]["span_label"], "P01")
-
-        session.resume({"ignore_ids": []})  # 都要改
-        wait_for(session, {STATUS_AWAITING})
-
-        snapshot = session.snapshot()
-        # 第二道闸门：补丁清单（逐条接受/拒绝）
+        # 唯一的闸门：补丁清单（问题清单不再问"有没有要忽略的"）
         self.assertEqual(len(snapshot["patches"]), 1)
         self.assertEqual(snapshot["pending"]["type"], "patch_review")
         self.assertEqual(snapshot["pending"]["patches"][0]["patch_id"], "patch-001")
@@ -269,8 +263,7 @@ class TestPersistence(ServiceTestCase):
         session = manager.create(self.options(), run_id="paper-test-restart")
         session.start()
         wait_for(session, {STATUS_AWAITING})
-        session.resume({"ignore_ids": []})      # 过问题闸门
-        wait_for(session, {STATUS_AWAITING})    # 停在补丁闸门
+        # 停在唯一的闸门（补丁清单）上，然后模拟重启
 
         # 丢掉进程内的一切，只留磁盘
         reset_guards()
@@ -279,7 +272,7 @@ class TestPersistence(ServiceTestCase):
         recovered = manager2.get("paper-test-restart")
 
         self.assertEqual(recovered.status, STATUS_AWAITING)
-        self.assertTrue(recovered.pending.get("recovered"))
+        self.assertEqual(recovered.pending, session.pending)
         # 重启后重建的是“补丁审阅”面板（含每条改动的理由）
         self.assertEqual(recovered.pending["type"], "patch_review")
         self.assertEqual(len(recovered.pending["patches"]), 1)

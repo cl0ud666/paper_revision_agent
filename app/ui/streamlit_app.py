@@ -30,6 +30,7 @@ from app.config import get_settings  # noqa: E402
 from app.utils.llm import describe_configuration  # noqa: E402
 from app.utils.loaders import DocumentLoadError, load_bytes, supported_extensions  # noqa: E402
 from app.workflow.harness import Harness  # noqa: E402
+from app.workflow.interaction import dispatch_request  # noqa: E402
 
 SEVERITY_LABEL = {"high": "高", "medium": "中", "low": "低"}
 
@@ -253,6 +254,83 @@ def show_issues(request: dict) -> dict | None:
     return None
 
 
+def show_issue_decisions(request: dict) -> dict | None:
+    st.subheader("2 选择统一口径")
+    st.caption(request.get("instruction", ""))
+    choices = {}
+    prefix = f"{request.get('run_id')}:{request.get('turn')}:{request.get('iteration')}"
+    for issue in request.get("issues") or []:
+        st.markdown(f"**{issue.get('problem', '')}**")
+        options = issue.get("options") or []
+        selection = st.radio(
+            "请选择处理方式", options=[-1, *range(len(options))],
+            format_func=lambda i, options=options: "先不修改" if i == -1 else options[i],
+            key=f"{prefix}:choice:{issue['id']}",
+        )
+        if selection != -1:
+            choices[str(issue["id"])] = selection
+    rules_text = st.text_area("补充判断 / 额外要求（每行一条）", key=f"{prefix}:rules")
+    if st.button("确认选择并继续", key=f"{prefix}:submit", type="primary"):
+        return {"choices": choices, "rules": [line.strip() for line in rules_text.splitlines() if line.strip()]}
+    return None
+
+
+def _show_patch_details(patches: list[dict]) -> None:
+    for patch in patches:
+        st.markdown(f"**[{patch.get('patch_id')}] {patch.get('position') or patch.get('span_label') or '全文'}**")
+        if patch.get("problem"):
+            st.caption(patch["problem"])
+        st.write("原文：", patch.get("before") or patch.get("quote") or "（插入）")
+        st.write("修改为：", patch.get("replace") or "（删除）")
+        st.caption(f"原因：{patch.get('rationale') or '—'}")
+        if patch.get("count"):
+            st.caption(f"共 {patch['count']} 处")
+        if patch.get("conflict_reason"):
+            st.warning(patch["conflict_reason"])
+
+
+def show_patch_review(request: dict) -> dict | None:
+    st.subheader("2 审阅修改清单")
+    st.caption(request.get("instruction", ""))
+    patches = request.get("patches") or []
+    _show_patch_details(patches)
+    by_id = {p["patch_id"]: p for p in patches if p.get("status") == "proposed"}
+    selected = st.multiselect("接受哪些修改", options=list(by_id), default=list(by_id), key=f"{request.get('run_id')}:{request.get('iteration')}:patches")
+    if st.button("确认修改并继续", type="primary"):
+        return {"accepted_ids": selected}
+    return None
+
+
+def show_final_confirm(request: dict) -> dict | None:
+    st.subheader("2 确认生成文件")
+    st.caption(request.get("instruction", ""))
+    patches = request.get("patches") or []
+    _show_patch_details(patches)
+    previous = set(request.get("defaults", {}).get("excluded_ids") or [])
+    options = [p["patch_id"] for p in patches]
+    default = [p["patch_id"] for p in patches if set(p.get("patch_ids") or [p["patch_id"]]).issubset(previous)]
+    excluded = st.multiselect("剔除哪些修改（不选则全部写入）", options=options, default=default, key=f"{request.get('run_id')}:{request.get('turn')}:excluded")
+    if st.button("确认并生成文件", type="primary"):
+        return {"excluded_ids": excluded}
+    if st.button("全部不写入"):
+        return {"exclude_all": True}
+    return None
+
+
+def show_request(request: dict) -> dict | None:
+    return dispatch_request(request, {
+        "issue_review": show_issue_decisions,
+        "patch_review": show_patch_review,
+        "final_confirm": show_final_confirm,
+        "human_approval": show_issues,
+    })
+
+
+def launch_run(harness: Harness, options: dict, request: str, document: str, source_docx: str):
+    run = harness.run_to_completion if options["auto_approve"] else harness.start
+    return run(request, document, max_iterations=options["max_iterations"], source_docx=source_docx)
+
+
 def show_results(result) -> None:
     """展示最终结果。"""
 
@@ -378,12 +456,7 @@ def main() -> None:
         )
         st.session_state["harness"] = harness
         with st.spinner("正在理解任务并规划执行路径..."):
-            st.session_state["result"] = harness.start(
-                request,
-                document,
-                max_iterations=options["max_iterations"],
-                source_docx=st.session_state.get("source_docx", ""),
-            )
+            st.session_state["result"] = launch_run(harness, options, request, document, st.session_state.get("source_docx", ""))
         st.rerun()
 
     result = st.session_state.get("result")
@@ -397,9 +470,10 @@ def main() -> None:
         return
 
     if result.is_interrupted:
-        payload = show_issues(result.pending_request)
+        payload = show_request(result.pending_request)
         if payload is not None:
-            st.session_state["pending_constraints"] = payload["constraints"]
+            if "constraints" in payload:
+                st.session_state["pending_constraints"] = payload["constraints"]
             with st.spinner("正在修改论文并做独立复核..."):
                 st.session_state["result"] = harness.resume(payload)
             st.rerun()

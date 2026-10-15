@@ -43,7 +43,14 @@ def write_redline_docx(
 
     source = str(state.get("source_docx") or "")
     rounds = applied_rounds(state)
-    if not source or not rounds:
+    # 建议类：原文没写错（或涉及代码），不生成补丁，只在原地留一条批注。
+    suggestions = [
+        {**issue, "kind": "advice"}
+        for issue in (state.get("audit_findings") or [])
+        if (issue.get("kind") or "fix") == "advice"
+    ]
+    # 没有补丁、也没有建议，才没什么可写的
+    if not source or (not rounds and not suggestions):
         return {}
 
     path = Path(source)
@@ -60,6 +67,7 @@ def write_redline_docx(
             str(target),
             author=settings.output.redline_author,
             comments=settings.output.redline_comments,
+            suggestions=suggestions,
         )
     except Exception as exc:  # noqa: BLE001 - 写回失败不该让整个任务失败
         log(f"[Report] 写回 Word 失败（{type(exc).__name__}: {exc}），只输出文字稿。")
@@ -285,7 +293,8 @@ def build_report(state: Any, *, trace_summary: dict[str, Any] | None = None) -> 
             "补丁决定统计："
             f"接受 {stats.get('accepted', len(edits))} 条、"
             f"拒绝 {stats.get('rejected', len(rejected))} 条、"
-            f"无法定位 {stats.get('conflict', 0)} 条。"
+            f"未能落实 {stats.get('conflict', 0)} 条（原因见上表；"
+            "含无法定位 / 定位有歧义 / 无效改动 / 改动冲突）。"
         )
         lines.append("")
     if rejected:
@@ -408,7 +417,7 @@ def build_report(state: Any, *, trace_summary: dict[str, Any] | None = None) -> 
         )
         lines.append("")
 
-    errors = state.get("errors") or []
+    errors = list(state.get("input_warnings") or []) + list(state.get("errors") or [])
     if errors:
         lines.append("## 七、异常与降级记录")
         lines.append("")
@@ -567,7 +576,7 @@ def write_outputs(
         return {"final_report": report, "errors": [f"写入产物失败：{exc}"]}
 
     log(f"[Report] 产物已写入：{run_dir}")
-    return {"final_report": report, **paths}
+    return {"final_report": report, **redline, **paths}
 
 
 def load_state_snapshot(path: str | Path) -> dict[str, Any]:

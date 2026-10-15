@@ -27,13 +27,14 @@ Word (.docx) 的结构化读取层：**文字 + XML 锚点**。
 
 from __future__ import annotations
 
+import bisect
 import io
 import re
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterator
 
-from app.utils.text import normalize_document_text
+from app.utils.text import normalize_document_text, normalize_with_map
 
 # 命名空间
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -346,6 +347,36 @@ def _shift(pieces: list[Piece], delta: int) -> list[Piece]:
     ]
 
 
+def _normalize_block(block: DocxBlock) -> None:
+    """
+    把块的文本归一化成与整篇文档同一套规则，并把偏移一起搬到新坐标系。
+
+    归一化会删字符（行尾空格、连续空行、首尾空白）。删了之后，块内每个
+    piece / obstacle 的旧偏移就不再指向同一段文字——所以这里用
+    ``normalize_with_map`` 拿到的位置映射，把它们逐个重算。
+
+    只改数字，不碰任何 XML 节点。
+    """
+
+    raw = block.text
+    normalized, kept = normalize_with_map(raw)
+    if normalized == raw:
+        return  # 绝大多数块走这条：零开销
+
+    def remap(position: int) -> int:
+        # kept 单调不减：bisect_left 得到"第一个原下标 ≥ position 的保留字符"的新下标
+        return bisect.bisect_left(kept, position)
+
+    pieces: list[Piece] = []
+    for piece in block.pieces:
+        start, end = remap(piece.start), remap(piece.end)
+        if start < end:  # 整段都是空白、被裁没了的片段丢掉
+            pieces.append(replace(piece, start=start, end=end))
+    block.pieces = pieces
+    block.obstacles = [(remap(offset), tag) for offset, tag in block.obstacles]
+    block.text = normalized
+
+
 def _paragraph_builder(paragraph: Any) -> _TextBuilder:
     builder = _TextBuilder()
     for kind, node, text in _iter_paragraph_content(paragraph):
@@ -546,6 +577,13 @@ class DocxSource:
 
         self.blocks = self._collect_blocks()
 
+        # 归一化会**删字符**（行尾空白、连续空行、首尾空白）。所以必须先归一化
+        # **每个块的文本**、把 pieces/obstacles 的偏移一起搬过去，再按归一化后的
+        # 长度累加块偏移。否则块的 start/end 与 self.text 会对不上，
+        # 补丁定位（block_at）就会拿到前一个块，误报"跨了文档结构"。
+        for block in self.blocks:
+            _normalize_block(block)
+
         cursor = 0
         for position, block in enumerate(self.blocks):
             if position:
@@ -555,9 +593,19 @@ class DocxSource:
             block.end = cursor
 
         joined = "\n\n".join(block.text for block in self.blocks)
-        self.text = normalize_document_text(joined) if joined else ""
+        # 每个块的文本都已两端裁净、内部空行也已收敛，所以这里与
+        # normalize_document_text(joined) **逐字节等价**（有测试盯着这一点）。
+        self.text = joined + "\n" if joined else ""
+        self._check_alignment()
 
-        # 自检：归一化不能悄悄改变偏移，否则宁可不给映射（让回写层拒绝而不是改错）
+    def _check_alignment(self) -> None:
+        """
+        自检：每个块的偏移都必须能在扁平文本里原样取回它自己的文字。
+
+        正常情况下这里恒为空——`_normalize_block` 已经把偏移搬到了同一坐标系。
+        真出现错位时，宁可把该块标成"只读不可回写"（让回写层拒绝），也不要改错。
+        """
+
         broken = []
         for block in self.blocks:
             if self.text[block.start : block.start + len(block.text)] != block.text:

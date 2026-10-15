@@ -7,7 +7,7 @@ graph TD;
 	__start__([<p>__start__</p>]):::first
 	orchestrator(orchestrator)
 	audit(audit)
-	human_approval(human_approval)
+	issue_review(issue_review)
 	revision(revision)
 	patch_review(patch_review)
 	apply(apply)
@@ -16,13 +16,13 @@ graph TD;
 	__end__([<p>__end__</p>]):::last
 	__start__ --> orchestrator;
 	apply --> review;
-	audit -.-> human_approval;
+	audit -.-> issue_review;
 	audit -.-> report;
 	audit -.-> revision;
-	human_approval -.-> report;
-	human_approval -.-> revision;
+	issue_review -.-> report;
+	issue_review -.-> revision;
 	orchestrator -.-> audit;
-	orchestrator -.-> human_approval;
+	orchestrator -. &nbsp;human_approval&nbsp; .-> issue_review;
 	orchestrator -.-> report;
 	orchestrator -.-> revision;
 	patch_review -.-> apply;

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.config import get_settings
+from app.utils.call_policy import get_policy
 
 
 class LLMConfigurationError(RuntimeError):
@@ -49,6 +50,10 @@ class LLMResponse:
 # 测试 / 评测可以注入自己的工厂：factory(agent, overrides) -> chat model
 _FACTORY: Callable[[str, dict[str, Any]], Any] | None = None
 _FACTORY_LOCK = threading.Lock()
+
+# 并发调用时（Audit 的分块并行）多个线程会同时往 llm_calls.jsonl 追加。
+# 一次写入是一整条 JSON（可能上万字符），没有锁就可能互相穿插成坏行。
+_LOG_LOCK = threading.Lock()
 
 
 def set_llm_factory(factory: Callable[[str, dict[str, Any]], Any] | None) -> None:
@@ -193,23 +198,31 @@ def call_llm(
         agent, temperature=temperature, max_tokens=max_tokens, json_mode=json_mode
     )
 
-    try:
-        message = model.invoke(messages)
-    except Exception as exc:  # noqa: BLE001
-        if (json_mode is None or json_mode) and _looks_like_json_mode_error(exc):
-            fallback = get_chat_model(
-                agent, temperature=temperature, max_tokens=max_tokens, json_mode=False
-            )
-            message = fallback.invoke(messages)
-        else:
-            raise
+    policy = get_policy(run_id)
+    reservation = policy.reserve(agent, prompt, system or "", max_tokens or get_settings().llm.max_tokens) if policy else None
+    response = None
 
-    response = LLMResponse(
-        text=message_text(message),
-        usage=usage_from_message(message),
-        model=get_settings().llm.model,
-        raw=message,
-    )
+    try:
+        try:
+            message = model.invoke(messages)
+        except Exception as exc:  # noqa: BLE001
+            if (json_mode is None or json_mode) and _looks_like_json_mode_error(exc):
+                fallback = get_chat_model(
+                    agent, temperature=temperature, max_tokens=max_tokens, json_mode=False
+                )
+                message = fallback.invoke(messages)
+            else:
+                raise
+
+        response = LLMResponse(
+            text=message_text(message),
+            usage=usage_from_message(message),
+            model=get_settings().llm.model,
+            raw=message,
+        )
+    finally:
+        if policy:
+            policy.settle(reservation, response.usage.total_tokens if response else None)
     _log_call(
         run_id=run_id,
         agent=agent,
@@ -260,8 +273,10 @@ def _log_call(
     try:
         path = Path(settings.paths.run_dir(run_id)) / "llm_calls.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        line = json.dumps(record, ensure_ascii=False) + "\n"
+        with _LOG_LOCK:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(line)
     except OSError:
         pass
 

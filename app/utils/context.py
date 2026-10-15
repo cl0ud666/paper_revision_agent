@@ -56,6 +56,8 @@ AGENT_CONTEXT_FIELDS: dict[str, tuple[str, ...]] = {
         "document_stats",
         "chunk_position",
         "consistency_check",
+        "name_list",
+        "candidate_issues",
         "chunk_text",
     ),
     "revision": (
@@ -102,7 +104,9 @@ FIELD_LABELS: dict[str, str] = {
     "instructions": "上游 Agent 的指令",
     "chunk_position": "当前片段位置",
     "consistency_check": "一致性核对提示（确定性检查）",
+    "name_list": "专有名词清单（待核验写法）",
     "chunk_text": "待处理文本（带段落 ID）",
+    "candidate_issues": "各分块报出的候选问题（待全局对齐）",
     "approved_issues": "需要解决的问题",
     "human_constraints": "用户约束（旧格式）",
     "rejected_memory": "已被用户拒绝的改动",
@@ -313,6 +317,48 @@ def _b_consistency_check(state: Any, extra: dict[str, Any]) -> str:
     )
 
 
+def _b_name_list(state: Any, extra: dict[str, Any]) -> str:
+    """专名核验用的清单（只在专名核验那一次调用里出现）。"""
+
+    return str(extra.get("name_list") or "").strip()
+
+
+def _b_candidate_issues(state: Any, extra: dict[str, Any]) -> str:
+    """
+    跨批对齐用的候选问题清单。
+
+    Audit 的分块是并行跑的，各分块互相看不到对方的发现，同一个毛病因此
+    容易被报好几遍。这里把**全部分块的发现**按分块顺序摆到一起，
+    让模型做一次全局收敛（合并重复、指出互相矛盾的条目）。
+
+    只在显式传入时出现：分块审查本身不带这个字段，所以不影响原有调用。
+    """
+
+    issues = extra.get("candidate_issues")
+    if not issues:
+        return ""
+
+    lines: list[str] = []
+    for position, issue in enumerate(issues, start=1):
+        label = issue.get("span_label") or issue.get("location") or "?"
+        category = issue.get("category") or ""
+        severity = issue.get("severity") or ""
+        problem = str(issue.get("problem") or "")[:80]
+        lines.append(f"#{position} [{label}]（{category}/{severity}）{problem}")
+        evidence = str(issue.get("evidence") or "")[:40]
+        if evidence:
+            lines.append(f"    证据：{evidence}")
+
+    # 不在这里截断：候选清单要完整送进去，否则"全局对齐"会漏掉被砍掉的那些。
+    # 长度由这一次调用的 Context 预算控制（PRA_AUDIT_CROSS_CHECK_TOKENS，0 = 不限）。
+    text = "\n".join(lines)
+    header = (
+        "（这些是**全部分块**各自报出的候选问题。分块之间互相看不到，"
+        "所以里面可能有重复、也可能有互相打架的条目。#1、#2… 是全量候选的序号）"
+    )
+    return f"{header}\n{text}"
+
+
 def _b_approved_issues(state: Any, extra: dict[str, Any]) -> str:
     issues = extra.get("issues")
     if issues is None:
@@ -326,6 +372,8 @@ def _b_approved_issues(state: Any, extra: dict[str, Any]) -> str:
     for issue in issues:
         item = {
             "id": issue.get("id"),
+            # 必须带上：Revision 要据此判断"这条是不是只有作者能拍板的矛盾"
+            "kind": issue.get("kind") or "fix",
             "category": issue.get("category"),
             "severity": issue.get("severity"),
             "span_label": issue.get("span_label") or issue.get("location"),
@@ -446,7 +494,7 @@ def _b_patch_decisions(state: Any, extra: dict[str, Any]) -> str:
         "accepted": "已接受（待应用）",
         "rejected": "已被用户拒绝（不算未完成，不要因此判 fail）",
         "proposed": "待用户决定",
-        "conflict": "无法定位（未改动原文）",
+        "conflict": "未能落实（未改动原文，具体原因见补丁条目）",
     }
     lines: list[str] = []
     # 长文 + 多批次时补丁可能有几十条：这里不做"只看前 20 条"的截断，
@@ -454,7 +502,11 @@ def _b_patch_decisions(state: Any, extra: dict[str, Any]) -> str:
     max_items = int(extra.get("max_patches", 200))
     for patch in list(patches)[:max_items]:
         raw_status = str(patch.get("status") or "")
-        status = status_hint.get(raw_status) or patch.get("status_label") or raw_status
+        # 优先用补丁自己的状态词：被拒的补丁按原因细分
+        # （无法定位 / 定位有歧义 / 无效改动 / 改动冲突），不要再一律叫"无法定位"。
+        status = (
+            patch.get("status_label") or status_hint.get(raw_status) or raw_status
+        )
         lines.append(
             f"- {patch.get('patch_id')} [{status}] "
             f"{patch.get('span_label') or patch.get('span_id')}："
@@ -536,6 +588,8 @@ _BUILDERS: dict[str, Callable[[Any, dict[str, Any]], str]] = {
     "instructions": _b_instructions,
     "chunk_position": _b_chunk_position,
     "consistency_check": _b_consistency_check,
+    "name_list": _b_name_list,
+    "candidate_issues": _b_candidate_issues,
     "chunk_text": _b_chunk_text,
     "approved_issues": _b_approved_issues,
     "human_constraints": _b_human_constraints,
@@ -564,6 +618,9 @@ TRIM_ORDER = (
     "approved_issues",
     "rejected_memory",
     "ignored_issues",
+    # 全局对齐的候选清单是那一次调用的**唯一**输入，
+    # 放最后裁：宁可先砍其它背景信息。
+    "candidate_issues",
 )
 
 
@@ -583,7 +640,10 @@ def build_context(
 
     settings = get_settings()
     extra = extra or {}
-    budget = budget_tokens or settings.context.budget_for(agent)
+    # 用 is None 判断：budget_tokens=0 表示"不限"，不能被 `or` 当成"没传"
+    budget = (
+        settings.context.budget_for(agent) if budget_tokens is None else budget_tokens
+    )
 
     fields: dict[str, str] = {}
     for name in AGENT_CONTEXT_FIELDS.get(agent, ()):  # per-agent 白名单

@@ -56,6 +56,9 @@ class AgentFlowTestCase(unittest.TestCase):
         os.environ["PRA_CHECKPOINT_DB"] = str(self.tmp_dir / "checkpoints" / "test.sqlite")
         os.environ["PRA_RETRY_MAX_ATTEMPTS"] = "1"
         os.environ["PRA_RETRY_BASE_DELAY"] = "0"
+        # 这个文件验证的是**交互式**流程，所以把两道闸门打开
+        os.environ["PRA_PATCH_GATE"] = "1"
+        os.environ["PRA_FINAL_CONFIRM"] = "0"
         reset_settings()
         reset_guards()
         reset_recorders()
@@ -142,9 +145,6 @@ class TestMultiTurn(AgentFlowTestCase):
 
         # ---------- 第一轮：提出补丁，但用户全部拒绝 ----------
         result = harness.start("请全面检查并修改这篇论文。", DOC)
-        self.assertTrue(result.is_interrupted)
-        self.assertEqual(result.pending_request["type"], "issue_review")
-        result = harness.resume({"ignore_ids": []})   # 问题都要改
         self.assertTrue(result.is_interrupted)
         self.assertEqual(result.pending_request["type"], "patch_review")
         result = harness.resume({"reject_all": True})
@@ -243,27 +243,24 @@ class TestMultiTurn(AgentFlowTestCase):
         )
 
         # 开局的要求立刻可见，并且 Audit 也看得到
-        self.assertEqual(result.pending_request["type"], "issue_review")
         self.assertIn("马铃薯", result.state["user_rules"][0]["text"])
         self.assertIn("马铃薯", prompts["audit"][0])
 
-        # 用户忽略这条问题（不写理由）
-        result = harness.resume({"ignore_all": True})
+        # 唯一的闸门是补丁闸门；本轮全部接受
+        self.assertEqual(result.pending_request["type"], "patch_review")
+        result = harness.resume({"accept_all": True})
         self.assertEqual(result.status, "completed")
-        self.assertEqual(result.revised_document, DOC)  # 全忽略 → 不改文档
 
         rules = result.state["user_rules"]
-        self.assertEqual([rule["kind"] for rule in rules], ["rule", "ignore"])
-        self.assertEqual(rules[1]["id"], "R2")
+        self.assertEqual([rule["kind"] for rule in rules], ["rule"])
+        self.assertEqual(rules[0]["id"], "R1")
 
-        # 第二轮：同一批问题不该再问一次，而且可以直接改要求
+        # 第二轮：可以直接改要求（撤销旧要求 + 提新要求）
         result = harness.follow_up("取消 R1\n把引言写具体")
         self.assertTrue(result.is_interrupted)
-        # 问题已被记住为“不改”，所以这一轮直接到补丁闸门
         self.assertEqual(result.pending_request["type"], "patch_review")
-        # 被撤销的要求不再出现在提示里；被记住的“不改”决定仍然在
+        # 被撤销的要求不再出现在提示里；新的追问在里面
         self.assertNotIn("马铃薯", prompts["revision"][-1])
-        self.assertIn("不改 P01", prompts["revision"][-1])
         self.assertIn("把引言写具体", prompts["revision"][-1])
 
         rules = result.state["user_rules"]
@@ -328,9 +325,6 @@ class TestPatchGate(AgentFlowTestCase):
 
         harness = Harness(logger=lambda message: None)
         result = harness.start("请全面检查并修改这篇论文。", DOC)
-        # 先过问题闸门（都要改）
-        self.assertEqual(result.pending_request["type"], "issue_review")
-        result = harness.resume({"ignore_ids": []})
 
         request = result.pending_request
         # 一次性给出全部改动，用户只被问一次

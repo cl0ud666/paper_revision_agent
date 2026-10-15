@@ -12,13 +12,27 @@ from typing import Any, Callable
 
 from app.agents.prompts import (
     AUDIT_HEADER,
+    CROSS_CHECK_HEADER,
+    NAME_CHECK_HEADER,
     ORCHESTRATOR_HEADER,
     REVIEW_HEADER,
     REVISION_HEADER,
+    TARGETED_CHECK_HEADER,
+    WHOLE_PAPER_HEADER,
 )
 from evals.judges import JUDGE_HEADER
 
-HEADERS = (ORCHESTRATOR_HEADER, AUDIT_HEADER, REVISION_HEADER, REVIEW_HEADER, JUDGE_HEADER)
+HEADERS = (
+    ORCHESTRATOR_HEADER,
+    AUDIT_HEADER,
+    NAME_CHECK_HEADER,
+    CROSS_CHECK_HEADER,
+    TARGETED_CHECK_HEADER,
+    WHOLE_PAPER_HEADER,
+    REVISION_HEADER,
+    REVIEW_HEADER,
+    JUDGE_HEADER,
+)
 
 
 class FakeMessage:
@@ -113,6 +127,36 @@ def plan_response(next_action: str = "audit") -> str:
 
 
 def audit_response(issues: list[dict[str, Any]]) -> str:
+    return json.dumps({"issues": issues}, ensure_ascii=False)
+
+
+def name_check_response(suspected: list[dict[str, Any]]) -> str:
+    """专名核验的输出（写法本身对不对）。"""
+
+    return json.dumps({"suspected": suspected}, ensure_ascii=False)
+
+
+def cross_check_response(
+    duplicates: list[list[int]] | None = None,
+    issues: list[dict[str, Any]] | None = None,
+) -> str:
+    """跨批对齐的输出：哪些候选是同一件事 + 只有全局视角才发现的问题。"""
+
+    return json.dumps(
+        {"duplicates": duplicates or [], "issues": issues or []},
+        ensure_ascii=False,
+    )
+
+
+def whole_paper_response(issues: list[dict[str, Any]]) -> str:
+    """全文矛盾核查的输出（不分块，整篇送审）。"""
+
+    return json.dumps({"issues": issues}, ensure_ascii=False)
+
+
+def targeted_response(issues: list[dict[str, Any]]) -> str:
+    """定向对照的输出（把两份材料摆到一起查矛盾）。"""
+
     return json.dumps({"issues": issues}, ensure_ascii=False)
 
 

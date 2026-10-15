@@ -32,6 +32,7 @@ from app.utils.llm import describe_configuration, ping
 from app.utils.loaders import DocumentLoadError, load_document
 from app.workflow.graph import build_graph, mermaid
 from app.workflow.harness import Harness
+from app.workflow.interaction import dispatch_request
 
 
 SEVERITY_LABEL = {"high": "高", "medium": "中", "low": "低"}
@@ -81,6 +82,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--run-id", type=str, default="", help="自定义 run_id")
     parser.add_argument("--show-graph", action="store_true", help="打印并导出 Workflow 结构")
+    parser.add_argument("--setup-checkpoint", action="store_true", help="初始化持久化 Checkpoint 数据库（部署时执行一次）")
+    '''
+    show_graph() 什么时候被调用？
+靠 main() 里手写的一段判断：
+
+python
+def main():
+    args = parse_args()          # 解析出 args.show_graph = True/False
+
+    if args.show_graph:          # ← 只有这里才会触发
+        show_graph()             # ← 真正调用
+        return
+'''
     parser.add_argument(
         "--inspect",
         action="store_true",
@@ -89,7 +103,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--ping", action="store_true", help="检查 LLM 配置与连通性")
     parser.add_argument("--quiet", "-q", action="store_true", help="减少过程日志")
     return parser.parse_args(argv)
-
+#命令行输入格式解析，比如-f是什么 -c是什么 自定义的
 
 def read_input(args: argparse.Namespace) -> tuple[str, Any]:
     """读取论文内容，并尽量带上"文件加载结果"（含能否写回 Word）。"""
@@ -346,59 +360,160 @@ def ask_patches(request: dict) -> dict:
     return {"accepted_ids": wanted}
 
 
+def ask_final_confirm(request: dict) -> dict:
+    """
+    写入 Word 之前的最后一次确认：把**跨轮次的全部改动**一次性列出来。
+
+    前面每轮都在内存里改文本（不然下一轮 Audit 看到的还是旧稿），
+    但 Word 只在最后写一次——所以确认也只需要一次。
+    """
+
+    patches = request.get("patches") or []
+    print("\n========== 即将写入 Word 的全部改动 ==========")
+    for position, patch in enumerate(patches, start=1):
+        where = patch.get("position") or patch.get("span_label") or ""
+        if patch.get("count"):
+            labels = patch.get("span_labels") or []
+            shown = "、".join(labels[:12]) + ("…" if len(labels) > 12 else "")
+            where = f"{where}（共 {patch['count']} 处：{shown}）"
+        print(f"\n[{position}] {where}")
+        print(f"    问题：{patch.get('problem') or patch.get('category') or ''}")
+        if patch.get("before"):
+            print(f"    原文：{patch['before']}")
+        if patch.get("replace"):
+            print(f"    改为什么：{patch['replace']}")
+        if patch.get("rationale"):
+            print(f"    原因：{patch['rationale']}")
+
+    try:
+        raw = input(
+            "\n要剔除哪几条？（例如 2,5；回车 = 全部写入；none = 都不写入）："
+        ).strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\n[CLI] 无法读取输入，默认全部写入。")
+        return {"excluded_ids": []}
+
+    if raw.lower() in {"none", "全部不写", "都不要"}:
+        return {"exclude_all": True}
+    if not raw:
+        return {"excluded_ids": []}
+    return {"excluded_ids": [piece.strip() for piece in raw.replace("，", ",").split(",") if piece.strip()]}
+
+
 def ask_issues(request: dict) -> dict:
     """
-    Audit 之后的问题闸门：逐条列出问题，问用户有没有要忽略的。
+    Audit 之后的**决策闸门**：只列出"前后矛盾、必须作者拍板"的问题。
 
-    默认都要改（直接回车继续）；被忽略的问题会被持久记下来，
-    多轮对话里不会再问一次。
+    为什么只问这一类：写错的问题（fix）Revision 直接改，可以更好的（advice）
+    只写批注，两者都不该打扰用户。真正卡住的只有"两处说法打架、以哪一处为准"——
+    实验事实在作者手上，模型看不到，只能问人。
+
+    用户的判断会被记成规则，随 Revision 的上下文一起送达。
+    直接回车 = 这些先不改。
     """
 
     issues = request.get("issues") or []
-    print("\n========== 审查发现的问题 ==========")
-    for issue in issues:
+    print("\n========== 需要你拍板的前后矛盾 ==========")
+    for position, issue in enumerate(issues, start=1):
         severity = SEVERITY_LABEL.get(issue.get("severity", ""), issue.get("severity", ""))
         print(
-            f"[{issue.get('id')}] {issue.get('span_label') or issue.get('location') or ''}"
+            f"\n[{position}] {issue.get('span_label') or issue.get('location') or ''}"
             f"（{severity}｜{issue.get('category')}）{issue.get('problem')}"
         )
-        if issue.get("suggestion"):
-            print(f"      建议：{issue['suggestion']}")
+        options = issue.get("options") or []
+        if options:
+            for offset, option in enumerate(options):
+                print(f"      {chr(ord('a') + offset)}) {option}")
+        elif issue.get("suggestion"):
+            print(f"      模型建议：{issue['suggestion']}")
 
     remembered = request.get("remembered") or []
     if remembered:
-        print("\n你已经确认过不修改的（本轮不再问）：")
+        print("\n你已经确认过不改的（本轮不再问）：")
         for rule in remembered:
             print(f"  [{rule.get('id')}] {rule.get('text')}")
 
     try:
         raw = input(
-            "\n有没有要忽略的？(回车=都要改；none=全部不改；也可输入 2,4)："
-        ).strip()
-        rules_text = input(
-            "要补充的要求吗？例如“全文统一把土豆写成马铃薯”（可留空）："
+            "\n以哪一处为准？按「序号+字母」选，例如 1a 3b；"
+            "也可以直接写你自己的判断\n"
+            "（回车 = 这些先不改）："
         ).strip()
     except (EOFError, KeyboardInterrupt):
-        print("\n[CLI] 无法读取输入，默认全部都要改。")
-        return {"ignore_ids": [], "rules": []}
+        print("\n[CLI] 无法读取输入，这些矛盾先不改。")
+        return {"ignore_ids": [issue["id"] for issue in issues], "rules": [], "turn": request.get("turn")}
 
-    payload: dict = {
-        "rules": [rules_text] if rules_text else [],
+    chosen = _resolve_choices(raw, issues)
+    return {
+        "rules": chosen,
+        "ignore_ids": [] if chosen else [issue["id"] for issue in issues],
         "turn": request.get("turn"),
     }
-    if raw.lower() in {"none", "全部", "都不要", "全不改"}:
-        payload["ignore_all"] = True
-    elif raw:
-        payload["ignore_ids"] = [
-            piece.strip() for piece in raw.replace("，", ",").split(",") if piece.strip()
-        ]
-    else:
-        payload["ignore_ids"] = []
-    return payload
+
+
+def _resolve_choices(raw: str, issues: list[dict]) -> list[str]:
+    """
+    把「1a 3b」这样的选择翻成给 Revision 看的**结论文本**。
+
+    认不出来的部分原样保留——用户直接写判断（"温度系数以 0.07 为准"）也能用。
+    """
+
+    import re
+
+    if not raw:
+        return []
+
+    by_number = {str(position): issue for position, issue in enumerate(issues, start=1)}
+    tokens = [piece for piece in re.split(r"[\s,，、;；]+", raw) if piece]
+
+    resolved: list[str] = []
+    leftover: list[str] = []
+    used_letters = False
+    for token in tokens:
+        match = re.fullmatch(r"(\d+)?([a-zA-Z])", token)
+        issue = None
+        if match:
+            index = match.group(1) or ("1" if len(issues) == 1 else "")
+            issue = by_number.get(index)
+        if issue is None:
+            leftover.append(token)
+            continue
+        options = issue.get("options") or []
+        offset = ord(match.group(2).lower()) - ord("a")
+        if offset < 0 or offset >= len(options):
+            leftover.append(token)
+            continue
+        used_letters = True
+        where = issue.get("span_label") or issue.get("location") or f"第 {match.group(1)} 条"
+        resolved.append(f"{where}：{options[offset]}")
+
+    # 一个选项都没认出来 → 整句当作用户自己写的判断。
+    # 认出了一部分 → 只把没认出来的那截原样附上，不要把整串再塞一遍
+    #（否则会多出一条毫无意义的规则，例如"1好 2a 3a"）。
+    if not used_letters:
+        return [raw]
+    if leftover:
+        resolved.append(" ".join(leftover))
+    return resolved
+
+
+def ask_request(request: dict) -> dict:
+    return dispatch_request(request, {
+        "issue_review": ask_issues,
+        "patch_review": ask_patches,
+        "final_confirm": ask_final_confirm,
+        "human_approval": ask_human,
+    })
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+
+    if args.setup_checkpoint:
+        from app.workflow.graph import setup_checkpointer
+        setup_checkpointer()
+        print("Checkpoint 数据库初始化完成。")
+        return 0
 
     if args.ping:
         print("当前 LLM 配置：")
@@ -438,6 +553,7 @@ def main(argv: list[str] | None = None) -> int:
             run_id=args.run_id or None,
             max_iterations=args.max_iterations,
             source_docx=source_docx,
+            rules=args.rule,
         )
     else:
         result = harness.start(
@@ -452,14 +568,7 @@ def main(argv: list[str] | None = None) -> int:
         while result.is_interrupted and rounds < 10:
             rounds += 1
             request = result.pending_request
-            if request.get("type") == "patch_review":
-                payload = ask_patches(request)
-                payload["turn"] = request.get("turn")
-            elif request.get("type") == "issue_review":
-                payload = ask_issues(request)
-            else:
-                payload = ask_human(request)
-                payload["iteration"] = request.get("iteration")
+            payload = ask_request(request)
             result = harness.resume(payload)
 
         # 多轮会话：这轮结束后还可以继续提要求（例如“把摘要再学术一点”）
@@ -478,12 +587,7 @@ def main(argv: list[str] | None = None) -> int:
             result = harness.follow_up(follow_up)
             while result.is_interrupted:
                 request = result.pending_request
-                if request.get("type") == "patch_review":
-                    payload = ask_patches(request)
-                elif request.get("type") == "issue_review":
-                    payload = ask_issues(request)
-                else:
-                    payload = ask_human(request)
+                payload = ask_request(request)
                 result = harness.resume(payload)
 
     print("\n========== 运行摘要 ==========")

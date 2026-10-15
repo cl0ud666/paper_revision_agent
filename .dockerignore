@@ -1,0 +1,15 @@
+.git
+.venv
+.env
+deploy/.env
+__pycache__
+**/__pycache__
+.pytest_cache
+.idea
+frontend/node_modules
+frontend/dist
+frontend/test-results
+data/runs
+data/checkpoints
+data/web-storage
+data/verification-temp

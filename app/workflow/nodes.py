@@ -13,6 +13,7 @@ Human Approval 不是一个 Agent，而是这里的一个人工确认节点，
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 from langgraph.types import interrupt
@@ -251,7 +252,13 @@ def issue_review_node(
     log = _logger(logger)
     findings = state.get("audit_findings") or []
     rules = list(state.get("user_rules") or [])
-    pending = [issue for issue in findings if not issue.get("ignored")]
+    # 只把**前后矛盾、必须由作者拍板**的问题拿出来问。
+    # 写错的、可以更好的都不打扰用户——那些要么自动改，要么只留批注。
+    pending = [
+        issue
+        for issue in findings
+        if (issue.get("kind") or "fix") == "decision" and not issue.get("ignored")
+    ]
     remembered = [
         rule
         for rule in rules
@@ -259,7 +266,7 @@ def issue_review_node(
     ]
 
     if not pending:
-        log("[Human] 所有问题都落在你已经确认“不改”的范围内，跳过这一步。")
+        log("[Human] 没有需要你拍板的矛盾，跳过这一步。")
         return {
             "trace": [_event(state, "issue_review", skipped=True, pending=0)],
         }
@@ -279,8 +286,11 @@ def issue_review_node(
             if rule.get("kind") == "rule" and rule.get("status", "active") == "active"
         ],
         "instruction": (
-            "以下问题里有没有你不想改的？（默认都要改，直接回车继续）"
-            "也可以顺手写要求，例如“全文统一把土豆写成马铃薯”。"
+            "以下位置前后矛盾——**以哪一处为准由你决定**"
+            "（实验事实在你手上，模型看不到）。"
+            "把你的判断写下来，例如「温度系数以 0.07 为准」"
+            "「96.67% 是 6-way 5-shot 的分类准确率」；"
+            "直接回车 = 这些先不改。"
         ),
         "defaults": {"ignore_ids": [], "rules": []},
     }
@@ -294,11 +304,14 @@ def issue_review_node(
     ]
     log(
         f"[Human] 已忽略 {len(ignored_ids)} 个问题；"
-        f"当前共有 {len(update.get('user_rules') or [])} 条要求/决定。"
+       f"当前共有 {len(update.get('user_rules') or [])} 条要求/决定。"
     )
 
     return {
         **update,
+        # 标记"已经问过"，避免同一批矛盾被反复拿出来问。
+        # 用户的判断已经作为 user_rules 存下来了，会自动进入 Revision 的上下文。
+        "decisions": True,
         "trace": [
             _event(
                 state,
@@ -369,6 +382,9 @@ def normalize_issue_payload(
 
 ISSUE_FIELDS = (
     "id",
+    "kind",
+    "options",
+    "span_labels",
     "span_label",
     "category",
     "severity",
@@ -405,6 +421,29 @@ def patch_review_node(
     log = _logger(logger)
     patches = state.get("proposed_patches") or []
     decidable = [patch for patch in patches if patch.get("status") == STATUS_PROPOSED]
+
+    # 默认不打断用户：Revision 已经在清单里写清了「原文 / 准备修改为 / 原因」，
+    # 需要人拍板的"前后矛盾"在 Audit 之后也问过一次了，这里再让用户逐条勾一遍是重复劳动。
+    if not get_settings().workflow.patch_gate:
+        for patch in patches:
+            log(_patch_line(patch))
+        update = normalize_patch_payload({"accept_all": True}, patches)
+        stats = update.get("patch_stats") or {}
+        log(
+            f"[Revision] 本轮 {stats.get('accepted', 0)} 条改动直接应用"
+            "（补丁闸门已关闭；如需逐条确认请设 PRA_PATCH_GATE=1）。"
+        )
+        return {
+            **update,
+            "trace": [
+                _event(
+                    state,
+                    "patch_review",
+                    auto=True,
+                    accepted=stats.get("accepted", 0),
+                )
+            ],
+        }
 
     request = {
         "type": "patch_review",
@@ -548,11 +587,20 @@ def review_node(state: Any, *, logger: Callable[[str], None] | None = None) -> d
 
 
 def report_node(state: Any, *, logger: Callable[[str], None] | None = None) -> dict[str, Any]:
-    """汇总报告并落盘。"""
+    """
+    汇总报告并落盘。
+
+    这里是**唯一一次**把改动交给用户确认的地方：前面每一轮都在内存里改文本
+    （不然下一轮 Audit 看到的还是旧稿），但**Word 文件只在最后写一次**。
+    所以确认也只需要一次——把所有轮次要写的改动一起列出来，
+    用户剔除掉的那几条不写进 Word。
+    """
 
     log = _logger(logger)
     run_id = state.get("run_id") or "adhoc"
     trace_summary = get_recorder(run_id).summary()
+
+    state = _confirm_before_writing(state, log)
 
     try:
         update = report_agent.write_outputs(state, trace_summary=trace_summary, logger=log)
@@ -562,8 +610,129 @@ def report_node(state: Any, *, logger: Callable[[str], None] | None = None) -> d
 
     return {
         **update,
+        "excluded_patch_ids": list(state.get("excluded_patch_ids") or []),
         "trace": [_event(state, "report", finished_at=utc_now())],
     }
+
+
+def _confirm_before_writing(state: Any, log: Callable[[str], None]) -> dict[str, Any]:
+    """
+    写入 Word 之前的最后一次确认。
+
+    没有改动就直接过；有改动就把**跨轮次的全部改动**列成
+    「问题 / 改为什么 / 原因」一次性给用户看，让他剔除不要的。
+    """
+
+    patches = list(state.get("applied_patches") or [])
+    if not patches or not get_settings().workflow.final_confirm:
+        return state
+
+    request = {
+        "type": "final_confirm",
+        "run_id": state.get("run_id", "adhoc"),
+        "turn": int(state.get("turn", 1)),
+        "patch_count": len(patches),
+        # 把"这条改动是冲着哪个问题去的"一起带上：
+        # 用户最后看到的是「问题 / 改为什么 / 原因」三行，缺了 problem 就只剩分类。
+        "patches": _merge_unification_items(
+            [_confirm_item(patch, state) for patch in patches]
+        ),
+        "instruction": (
+            "以上是本次全部改动，**确认后写入 Word 副本**（原文件不动）。"
+            "要剔除哪几条就输入编号（例如 2,5）；直接回车 = 全部写入；none = 都不写入。"
+        ),
+        "defaults": {"excluded_ids": list(state.get("excluded_patch_ids") or [])},
+    }
+
+    payload = interrupt(request)
+    excluded = _excluded_ids(payload, patches)
+    if excluded:
+        log(f"[Human] 已剔除 {len(excluded)} 条改动，不会写入 Word：{'、'.join(excluded)}")
+    else:
+        log(f"[Human] 确认写入 {len(patches)} 条改动。")
+    return {**state, "excluded_patch_ids": excluded}
+
+
+def _confirm_item(patch: dict[str, Any], state: Any) -> dict[str, Any]:
+    """最后确认时的单条改动：补丁字段 + 对应问题的描述。"""
+
+    item = _public_patch(patch)
+    issue_id = patch.get("issue_id")
+    for issue in state.get("audit_findings") or []:
+        if issue.get("id") == issue_id:
+            item["problem"] = issue.get("problem") or ""
+            item["kind"] = issue.get("kind") or "fix"
+            break
+    return item
+
+
+_UNIFY_IN_NOTE = re.compile(r"全文统一为「([^」]+)」")
+
+
+def _merge_unification_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    把"同一个统一口径"下的几十条补丁**合并成一条展示**。
+
+    一次"全文统一 MoCo→MOCO"会产生 47 条补丁（每处一条，Word 里要逐处留痕）。
+    让用户在确认清单里读 47 行没有意义——合成一条、带上处数和段落列表，
+    **Word 里仍然是 47 处独立的修订痕迹**，可以逐条接受/拒绝。
+    """
+
+    merged: list[dict[str, Any]] = []
+    buckets: dict[str, dict[str, Any]] = {}
+    for item in items:
+        if item.get("strategy") != "unification":
+            merged.append(item)
+            continue
+        match = _UNIFY_IN_NOTE.search(str(item.get("rationale") or ""))
+        target = match.group(1) if match else "统一写法"
+        bucket = buckets.get(target)
+        if bucket is None:
+            bucket = {
+                **item,
+                "position": "全文",
+                "problem": f"同一个名称在全文有几种写法，统一为「{target}」",
+                "before": "",
+                "replace": f"统一为「{target}」",
+                "span_labels": [],
+                "count": 0,
+                "patch_ids": [],
+            }
+            buckets[target] = bucket
+            merged.append(bucket)
+        bucket["count"] = int(bucket["count"]) + 1
+        bucket["patch_ids"].append(item["patch_id"])
+        label = str(item.get("span_label") or "")
+        if label and label not in bucket["span_labels"]:
+            bucket["span_labels"].append(label)
+    return merged
+
+
+def _excluded_ids(payload: Any, patches: list[dict[str, Any]]) -> list[str]:
+    """解析"剔除哪几条"：支持 excluded_ids / 编号 / none。"""
+
+    data = payload if isinstance(payload, dict) else {}
+    if data.get("exclude_all"):
+        return [str(patch.get("patch_id") or "") for patch in patches]
+
+    raw = data.get("excluded_ids") or data.get("numbers") or []
+    if isinstance(raw, str):
+        raw = [piece.strip() for piece in raw.replace("，", ",").split(",") if piece.strip()]
+
+    known = {str(patch.get("patch_id") or "") for patch in patches}
+    by_number = {
+        str(position): str(patch.get("patch_id") or "")
+        for position, patch in enumerate(patches, start=1)
+    }
+
+    wanted: list[str] = []
+    for item in raw:
+        key = str(item).strip()
+        if key in by_number:
+            wanted.append(by_number[key])
+        elif key in known:
+            wanted.append(key)
+    return [patch_id for patch_id in dict.fromkeys(wanted) if patch_id]
 
 
 # ---------------------------------------------------------------- 工具函数
@@ -667,8 +836,10 @@ PATCH_FIELDS = (
     "span_label",
     "sentence_ref",
     "position",
+    "strategy",
     "status",
     "status_label",
+    "conflict_code",
     "before",
     "replace",
     "rationale",
@@ -680,6 +851,28 @@ PATCH_FIELDS = (
     "decided_by",
     "decision_note",
 )
+
+
+def _patch_line(patch: dict[str, Any]) -> str:
+    """
+    Revision 报给用户看的格式（批注闸门关闭时由它输出）。
+
+    固定三行——原文 / 准备修改为 / 原因，和 Word 批注保持一致，
+    用户看一遍就知道要改什么、为什么改，不需要再逐条确认。
+    """
+
+    where = patch.get("position") or patch.get("span_label") or patch.get("span_id") or ""
+    lines = [f"[{patch.get('patch_id')}] {where}"]
+    before = str(patch.get("before") or patch.get("quote") or "").strip()
+    after = "（删除）" if patch.get("delete") else str(patch.get("replace") or "").strip()
+    reason = str(patch.get("rationale") or "").strip()
+    if before:
+        lines.append(f"    原文：{before}")
+    if after:
+        lines.append(f"    准备修改为：{after}")
+    if reason:
+        lines.append(f"    原因：{reason}")
+    return "\n".join(lines)
 
 
 def _public_patch(patch: dict[str, Any]) -> dict[str, Any]:

@@ -27,6 +27,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.utils.tracing import get_recorder, utc_now
+from app.utils.call_policy import get_policy
 
 
 class BudgetExceeded(RuntimeError):
@@ -70,6 +71,10 @@ def usage(state: Any) -> dict[str, Any]:
     used_tokens = int(summary["totals"].get("total_tokens") or 0)
     started_at = state.get("run_started_at") or ""
     elapsed = _elapsed_seconds(started_at)
+    policy = get_policy(run_id)
+    if policy is not None:
+        # Web 人工闸门可能等待数天，预算只计算实际后台执行时间。
+        elapsed = policy.elapsed_seconds()
     turn_started_at = state.get("turn_started_at") or started_at
     turn_elapsed = _elapsed_seconds(turn_started_at)
 

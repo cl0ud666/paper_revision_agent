@@ -20,6 +20,9 @@ from __future__ import annotations
 
 import json
 import threading
+import os
+import tempfile
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -28,6 +31,7 @@ from app.agents.revision import all_applied_edits, all_failed_edits
 from app.config import get_settings
 from app.utils.tracing import utc_now
 from app.workflow.harness import Harness, new_run_id
+from app.workflow.interaction import prepare_response
 
 # ---------- 任务状态 ----------
 STATUS_CREATED = "created"
@@ -71,6 +75,8 @@ class RunOptions:
     max_iterations: int | None = None
     auto_approve: bool = False
     constraints: list[str] = field(default_factory=list)
+    rules: list[str] = field(default_factory=list)
+    source_docx: str = ""
 
     def to_json(self, *, include_document: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -79,6 +85,8 @@ class RunOptions:
             "max_iterations": self.max_iterations,
             "auto_approve": self.auto_approve,
             "constraints": list(self.constraints),
+            "rules": list(self.rules),
+            "source_docx": self.source_docx,
             "document_chars": len(self.document or ""),
         }
         if include_document:
@@ -94,6 +102,8 @@ class RunOptions:
             max_iterations=payload.get("max_iterations"),
             auto_approve=bool(payload.get("auto_approve")),
             constraints=list(payload.get("constraints") or []),
+            rules=list(payload.get("rules") or []),
+            source_docx=str(payload.get("source_docx") or ""),
         )
 
 
@@ -128,6 +138,9 @@ class RunSession:
         self._file_cursor = 0
         self._logs: list[str] = []
         self._thread: threading.Thread | None = None
+        self._limiter: threading.BoundedSemaphore | None = None
+        self._slot_held = False
+        self._slot_generation = 0
 
     # ------------------------------------------------------------ 生命周期
 
@@ -162,6 +175,7 @@ class RunSession:
                 raise RunStateError(
                     f"任务状态为 {self.status}，当前没有等待人工确认的环节"
                 )
+            payload = prepare_response(self.pending, payload)
             approved = payload.get("approved_issue_ids")
             count = len(approved) if isinstance(approved, list) else "全部"
             self._append_event(
@@ -215,21 +229,43 @@ class RunSession:
     # ------------------------------------------------------------ 执行入口
 
     def _spawn(self, target: Callable[[], None]) -> None:
+        if self._limiter is not None and not self._limiter.acquire(blocking=False):
+            raise RunStateError("并发任务已达上限，请等当前任务完成后再继续")
+        self._slot_held = self._limiter is not None
+        self._slot_generation += 1
+        generation = self._slot_generation
+        old_status, old_stage = self.status, self.stage
         self.status = STATUS_RUNNING
         self.stage = "planning"
         self.updated_at = utc_now()
-        self._save()
 
         def runner() -> None:
             try:
                 target()
             except Exception as exc:  # noqa: BLE001 - 后台线程必须兜住所有异常
                 self._fail(f"{type(exc).__name__}: {exc}")
+            finally:
+                with self._lock:
+                    self._release_slot(generation)
 
         self._thread = threading.Thread(
             target=runner, name=f"run-{self.run_id}", daemon=True
         )
-        self._thread.start()
+        try:
+            self._save()
+            self._thread.start()
+        except Exception:
+            self._release_slot()
+            self.status, self.stage = old_status, old_stage
+            self._save()
+            raise
+
+    def _release_slot(self, generation: int | None = None) -> None:
+        if generation is not None and generation != self._slot_generation:
+            return
+        if self._slot_held:
+            self._slot_held = False
+            self._limiter.release()
 
     def _harness_for_run(self) -> Harness:
         if self._harness is None:
@@ -250,6 +286,8 @@ class RunSession:
             self.options.document,
             run_id=self.run_id,
             max_iterations=self.options.max_iterations,
+            rules=self.options.rules,
+            source_docx=self.options.source_docx,
         )
         self._apply_result(result)
 
@@ -260,6 +298,8 @@ class RunSession:
             self.options.document,
             run_id=self.run_id,
             max_iterations=self.options.max_iterations,
+            rules=self.options.rules,
+            source_docx=self.options.source_docx,
         )
         self._apply_result(result)
 
@@ -281,7 +321,7 @@ class RunSession:
 
             if result.status == "interrupted":
                 new_status, new_stage = STATUS_AWAITING, "awaiting_human"
-                pending = result.pending_request or {}
+                pending = deepcopy(result.pending_request or {})
                 event = {
                     "type": "lifecycle",
                     "agent": "system",
@@ -310,7 +350,8 @@ class RunSession:
             self._write_state_snapshot(state)
             # 先落盘再更新内存：这样任何读到新状态的读者，
             # 都能保证磁盘上的 session.json 已经同步（避免读到旧状态）
-            self._write_session(new_status, new_stage, self.error)
+            self._write_session(new_status, new_stage, self.error, pending=pending)
+            self._release_slot()
             self.status = new_status
             self.stage = new_stage
             self.pending = pending
@@ -321,9 +362,13 @@ class RunSession:
             self.error = message
             self.finished_at = utc_now()
             self.updated_at = self.finished_at
-            self._write_session(STATUS_FAILED, "failed", message)
+            self._release_slot()
             self.status = STATUS_FAILED
             self.stage = "failed"
+            try:
+                self._write_session(STATUS_FAILED, "failed", message)
+            except RunStateError as exc:
+                self.error = f"{message}；{exc}"
             self._append_event(
                 {
                     "type": "lifecycle",
@@ -555,7 +600,7 @@ class RunSession:
     def _save(self) -> None:
         self._write_session(self.status, self.stage, self.error)
 
-    def _write_session(self, status: str, stage: str, error: str) -> None:
+    def _write_session(self, status: str, stage: str, error: str, *, pending: dict | None = None) -> None:
         if not self.persistent:
             return
         payload = {
@@ -568,14 +613,13 @@ class RunSession:
             "updated_at": self.updated_at,
             "finished_at": self.finished_at,
             "options": self.options.to_json(),
+            "pending_request": deepcopy(pending if pending is not None else self.pending) if status == STATUS_AWAITING else {},
         }
         try:
             self.run_dir.mkdir(parents=True, exist_ok=True)
-            self.session_path.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
-        except OSError:
-            pass
+            _atomic_json(self.session_path, payload)
+        except OSError as exc:
+            raise RunStateError("任务状态持久化失败") from exc
 
     def _write_state_snapshot(self, state: dict[str, Any]) -> None:
         """把当前 State 存盘（剔除体积较大的 trace 字段）。"""
@@ -585,12 +629,9 @@ class RunSession:
         try:
             self.run_dir.mkdir(parents=True, exist_ok=True)
             payload = {key: value for key, value in state.items() if key != "trace"}
-            self.state_path.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2, default=str),
-                encoding="utf-8",
-            )
-        except OSError:
-            pass
+            _atomic_json(self.state_path, payload)
+        except OSError as exc:
+            raise RunStateError("Workflow 状态快照持久化失败") from exc
 
 
 class RunManager:
@@ -598,7 +639,10 @@ class RunManager:
 
     def __init__(self, *, max_concurrent: int | None = None) -> None:
         self.settings = get_settings()
-        self.max_concurrent = max_concurrent or self.settings.server.max_concurrent_runs
+        self.max_concurrent = max_concurrent if max_concurrent is not None else self.settings.server.max_concurrent_runs
+        if self.max_concurrent < 1:
+            raise ValueError("max_concurrent 必须大于 0")
+        self._limiter = threading.BoundedSemaphore(self.max_concurrent)
         self._sessions: dict[str, RunSession] = {}
         self._lock = threading.RLock()
 
@@ -629,50 +673,19 @@ class RunManager:
         session.finished_at = payload.get("finished_at", "")
 
         if session.status == STATUS_AWAITING:
-            state = _read_json(session.state_path) or {}
-            if state.get("proposed_patches"):
-                # 重启后重建“补丁审阅”面板
-                patches = _compact_patches(state.get("proposed_patches") or [])
-                session.pending = {
-                    "type": "patch_review",
-                    "run_id": run_id,
-                    "turn": int(state.get("turn", 1)),
-                    "iteration": int(state.get("iteration", 0)),
-                    "summary": state.get("revision_summary", ""),
-                    "patch_count": len(patches),
-                    "patches": patches,
-                    "decidable_ids": [
-                        patch.get("patch_id")
-                        for patch in patches
-                        if patch.get("status") == "proposed"
-                    ],
-                    "instruction": "请勾选要接受的改动（默认全选）。",
-                    "recovered": True,
-                }
-            elif state.get("audit_findings"):
-                # 重启后重建“问题闸门”面板
-                pending_issues = [
-                    issue
-                    for issue in state.get("audit_findings") or []
-                    if not issue.get("ignored")
-                ]
-                session.pending = {
-                    "type": "issue_review",
-                    "run_id": run_id,
-                    "turn": int(state.get("turn", 1)),
-                    "iteration": int(state.get("iteration", 0)),
-                    "issues": _compact_issues(pending_issues),
-                    "remembered": [
-                        {"id": rule.get("id"), "text": rule.get("text")}
-                        for rule in (state.get("user_rules") or [])
-                        if rule.get("kind") == "ignore"
-                        and rule.get("status", "active") == "active"
-                    ],
-                    "instruction": "以下问题里有没有你不想改的？",
-                    "recovered": True,
-                }
+            # 原样恢复实际请求，包括 defaults、选项和分组补丁 ID。
+            session.pending = deepcopy(payload.get("pending_request") or {})
+            if not session.pending:
+                # 兼容旧 session：读取真正的 Checkpoint interrupt，禁止猜闸门。
+                session.pending = session._harness_for_run().current_pending_request()
+                if not session.pending:
+                    raise RunStateError("暂停任务缺少持久化请求和 Checkpoint，无法安全恢复")
+                session._save()
 
         with self._lock:
+            if run_id in self._sessions:
+                return self._sessions[run_id]
+            session._limiter = self._limiter
             self._sessions[run_id] = session
         return session
 
@@ -740,19 +753,36 @@ class RunManager:
             raise RunStateError("缺少任务描述")
         if not (options.document or "").strip():
             raise RunStateError("论文内容为空")
-        if self.active_count() >= self.max_concurrent:
-            raise RunStateError(
-                f"并发任务已达上限（{self.max_concurrent}），请等当前任务完成后再提交"
-            )
-
-        session = RunSession(run_id or new_run_id("paper"), options)
+        session = RunSession(run_id if run_id is not None else new_run_id("paper"), options)
         with self._lock:
+            if self.active_count() >= self.max_concurrent:
+                raise RunStateError(f"并发任务已达上限（{self.max_concurrent}），请稍后提交")
+            if session.run_id in self._sessions or session.run_dir.exists():
+                raise RunStateError("run_id 已存在，请使用新 ID 或恢复原任务")
+            # mkdir 是跨线程/进程的原子目录预留，避免同名任务覆盖。
+            session.run_dir.mkdir(parents=True, exist_ok=False)
+            session._limiter = self._limiter
+            session._save()
             self._sessions[session.run_id] = session
-        session._save()
         return session
 
 
 # ------------------------------------------------------------------ 工具函数
+
+
+def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
+    """同目录临时文件 + 原子替换，读者不会看到半个 JSON。"""
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, suffix=".tmp", delete=False) as handle:
+            temp_path = Path(handle.name)
+            json.dump(payload, handle, ensure_ascii=False, indent=2, default=str)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -822,8 +852,10 @@ def _compact_patches(patches: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "span_label",
         "sentence_ref",
         "position",
+        "strategy",
         "status",
         "status_label",
+        "conflict_code",
         "before",
         "replace",
         "rationale",

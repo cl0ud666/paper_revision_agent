@@ -17,12 +17,13 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable
 
 from app.document.spans import Span, build_spans, resolve_span, sentence_id
 from app.utils.edits import locate_unique
-from app.utils.text import compact_text, normalize_whitespace
+from app.utils.text import compact_text, looks_like_code, normalize_whitespace
 from app.utils.tracing import utc_now
 
 STATUS_PROPOSED = "proposed"
@@ -47,7 +48,33 @@ CONFLICT_TEXT = {
     "empty_replace": "修改后的内容为空（如果要删除内容，请把 delete 设为 true）",
     "no_change": "修改前后内容相同（无效改动）",
     "overlap": "与同一段落的另一条补丁重叠",
+    "code_protected": "代码内容或变量名受到保护，不会由工具修改",
 }
+
+# 被拒补丁的**短标签**。
+#
+# 以前这些一律显示成"无法定位"，但其中一半根本不是定位问题：
+# "改后为空""前后相同"是**改动本身无效**，"与别的补丁重叠"是**两条改动打架**。
+# 一律叫"无法定位"会让用户以为系统找不到位置，其实位置找得好好的。
+CONFLICT_LABELS = {
+    "empty": "无法定位",
+    "not_found": "无法定位",
+    "no_span": "无法定位",
+    "ambiguous": "定位有歧义",
+    "empty_replace": "无效改动",
+    "no_change": "无效改动",
+    "overlap": "改动冲突",
+    "code_protected": "代码不修改",
+}
+
+_CODE_IDENTIFIER_RE = re.compile(r"(?<![A-Za-z0-9_])[A-Za-z_]\w*_[A-Za-z_]\w*(?![A-Za-z0-9_])")
+
+
+def changes_code(before: str, after: str, span_text: str) -> bool:
+    """代码段不修改；正文中引用的 snake_case/常量名也必须逐字保留。"""
+    return looks_like_code(span_text) or Counter(_CODE_IDENTIFIER_RE.findall(before)) != Counter(
+        _CODE_IDENTIFIER_RE.findall(after)
+    )
 
 
 @dataclass
@@ -68,6 +95,10 @@ class Patch:
     round: int = 1
     status: str = STATUS_PROPOSED
     conflict_reason: str = ""
+    # 被拒的**原因代码**（not_found / ambiguous / no_change / overlap …）。
+    # conflict_reason 是给人读的整句话，这个是机器可判的短码，
+    # 短标签（"无法定位"/"定位有歧义"/"无效改动"/"改动冲突"）由它决定。
+    conflict_code: str = ""
     warnings: list[str] = field(default_factory=list)
     strategy: str = ""
     sentence_index: int = 0
@@ -107,9 +138,24 @@ class Patch:
         after = compact_text(self.replace, 40) if self.replace.strip() else "（删除）"
         return f"{self.position}：{before} → {after}"
 
+    @property
+    def status_label(self) -> str:
+        """
+        给用户看的状态词。
+
+        被拒的补丁按**原因**细分：找不到原文/找不到段落才是"无法定位"，
+        "改后为空""前后相同"是"无效改动"，"与别的补丁重叠"是"改动冲突"。
+        """
+
+        if self.status == STATUS_CONFLICT:
+            return CONFLICT_LABELS.get(
+                self.conflict_code, STATUS_LABELS[STATUS_CONFLICT]
+            )
+        return STATUS_LABELS.get(self.status, self.status)
+
     def to_json(self) -> dict[str, Any]:
         payload = asdict(self)
-        payload["status_label"] = STATUS_LABELS.get(self.status, self.status)
+        payload["status_label"] = self.status_label
         payload["position"] = self.position
         payload["sentence_ref"] = self.sentence_ref
         return payload
@@ -195,6 +241,8 @@ def validate_patch(patch: Patch, spans: Iterable[Span]) -> Patch:
     span = resolve_span(spans, span_id=patch.span_id, label=patch.span_label)
     if span is None:
         return _conflict(patch, "no_span")
+    if looks_like_code(span.text):
+        return _conflict(patch, "code_protected")
 
     patch.span_id = span.id
     patch.span_label = span.label
@@ -216,6 +264,8 @@ def validate_patch(patch: Patch, spans: Iterable[Span]) -> Patch:
     if not quote:
         if not patch.delete and normalize_whitespace(span.text) == normalize_whitespace(patch.replace):
             return _conflict(patch, "no_change")
+        if changes_code(span.text, patch.replace, span.text):
+            return _conflict(patch, "code_protected")
         # 整段替换
         patch.strategy = "span-delete" if patch.delete else "span-whole"
         patch.start_in_span = 0
@@ -233,6 +283,8 @@ def validate_patch(patch: Patch, spans: Iterable[Span]) -> Patch:
     start, end, strategy = locate_unique(span.text, quote)
     if start < 0:
         return _conflict(patch, strategy if strategy in CONFLICT_TEXT else "not_found")
+    if changes_code(span.text[start:end], patch.replace, span.text):
+        return _conflict(patch, "code_protected")
 
     patch.strategy = f"span-{strategy}"
     if patch.delete:
@@ -258,6 +310,7 @@ def validate_patch(patch: Patch, spans: Iterable[Span]) -> Patch:
 
 def _conflict(patch: Patch, reason: str) -> Patch:
     patch.status = STATUS_CONFLICT
+    patch.conflict_code = reason
     patch.conflict_reason = CONFLICT_TEXT.get(reason, reason)
     return patch
 
@@ -351,7 +404,9 @@ def decide_patch(
     """接受或拒绝一条补丁（用户只需点一下，理由由 Agent 提供）。"""
 
     if patch.status == STATUS_CONFLICT and decision == "accept":
-        patch.conflict_reason = patch.conflict_reason or CONFLICT_TEXT["not_found"]
+        if not patch.conflict_reason:
+            patch.conflict_code = patch.conflict_code or "not_found"
+            patch.conflict_reason = CONFLICT_TEXT["not_found"]
         return patch  # 无法定位的补丁不能被接受
 
     patch.status = STATUS_ACCEPTED if decision == "accept" else STATUS_REJECTED
@@ -400,7 +455,14 @@ def apply_patches(
         span = resolve_span(spans, span_id=patch.span_id, label=patch.span_label)
         if span is None or patch.start_in_span < 0:
             patch.status = STATUS_CONFLICT
-            patch.conflict_reason = patch.conflict_reason or CONFLICT_TEXT["no_span"]
+            if not patch.conflict_reason:
+                patch.conflict_code = patch.conflict_code or "no_span"
+                patch.conflict_reason = CONFLICT_TEXT["no_span"]
+            outcome.skipped.append(patch)
+            continue
+        before = span.text[patch.start_in_span:patch.end_in_span]
+        if changes_code(before, patch.replace, span.text):
+            _conflict(patch, "code_protected")
             outcome.skipped.append(patch)
             continue
         start = span.start + patch.start_in_span
@@ -414,6 +476,7 @@ def apply_patches(
     for start, end, patch in targets:
         if filtered and start < filtered[-1][1]:
             patch.status = STATUS_CONFLICT
+            patch.conflict_code = "overlap"
             patch.conflict_reason = CONFLICT_TEXT["overlap"]
             outcome.skipped.append(patch)
             continue

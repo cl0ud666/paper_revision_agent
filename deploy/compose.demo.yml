@@ -1,0 +1,8 @@
+# Explicit offline acceptance mode. Actual deployments omit this override file.
+services:
+  api:
+    environment:
+      PRA_WEB_DEMO: "1"
+  worker:
+    environment:
+      PRA_WEB_DEMO: "1"

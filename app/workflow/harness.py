@@ -18,12 +18,13 @@ from typing import Any, Callable
 
 from langgraph.types import Command
 
-from app.config import get_settings
+from app.config import get_settings, validate_run_id
 from app.state.schema import initial_state
 from app.utils.tracing import get_recorder, reset_recorders, utc_now
 from app.utils.rules import apply_payload as rules_payload
 from app.utils.rules import parse_instruction, rule_texts
 from app.workflow.graph import build_graph
+from app.workflow.interaction import auto_response, prepare_response
 
 
 def new_run_id(prefix: str = "run") -> str:
@@ -151,7 +152,16 @@ class Harness:
             以 Word 修订痕迹写回一份副本（另存，不动原文件）。
         """
 
-        self.run_id = run_id or new_run_id()
+        self.run_id = validate_run_id(run_id if run_id is not None else new_run_id())
+        run_dir = self.settings.paths.run_dir(self.run_id)
+        if any((run_dir / name).exists() for name in ("state.json", "original_document.md", "trace.jsonl", "llm_calls.jsonl")):
+            raise ValueError("run_id 已有运行产物，请使用新 ID 或恢复原任务")
+        run_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            with (run_dir / ".started").open("x", encoding="utf-8") as handle:
+                handle.write(self.thread_id)
+        except FileExistsError:
+            raise ValueError("run_id 已启动，请使用新 ID 或恢复原任务") from None
         # 只清掉这个 run_id 的旧统计；不要动其它正在运行的任务
         reset_recorders(self.run_id)
 
@@ -172,6 +182,7 @@ class Harness:
             }
         ]
         state["conversation"] = [{"turn": 1, "role": "user", "content": user_request}]
+        rules = list(dict.fromkeys([*self.auto_approve_constraints, *(rules or [])]))
         if rules:
             # 开局就可以给“要求”，例如：全文统一把「土豆」写成「马铃薯」
             seed_rules, _ = rules_payload(
@@ -185,7 +196,18 @@ class Harness:
     def resume(self, payload: dict[str, Any] | None = None) -> RunResult:
         """用用户的输入恢复被中断的 Workflow。"""
 
-        return self._invoke(Command(resume=payload or {}))
+        request = self.current_pending_request()
+        if not request:
+            raise RuntimeError("当前任务没有等待人工回答的请求")
+        return self._invoke(Command(resume=prepare_response(request, payload or {})))
+
+    def current_pending_request(self) -> dict[str, Any]:
+        """从 Checkpoint 读取真实 interrupt，供重启恢复和 API 使用。"""
+        snapshot = self.graph.get_state(self._config())
+        pending = list(getattr(snapshot, "interrupts", ()) or ())
+        if not pending:
+            pending = [item for task in getattr(snapshot, "tasks", ()) for item in getattr(task, "interrupts", ())]
+        return _extract_interrupts({"__interrupt__": pending})[0] if pending else {}
 
     def follow_up(
         self,
@@ -309,6 +331,7 @@ class Harness:
         run_id: str | None = None,
         max_iterations: int | None = None,
         source_docx: str = "",
+        rules: list[str] | None = None,
     ) -> RunResult:
         """
         一路跑到结束（遇到人工节点时自动批准）。
@@ -322,6 +345,7 @@ class Harness:
             run_id=run_id,
             max_iterations=max_iterations,
             source_docx=source_docx,
+            rules=rules,
         )
         guard = 0
         while result.is_interrupted and guard < 10:
@@ -373,40 +397,7 @@ class Harness:
     def _auto_payload(self, request: dict[str, Any]) -> dict[str, Any]:
         """自动审批：全接受 / 全批准，并带上预设约束。"""
 
-        if request.get("type") == "patch_review":
-            payload = {
-                "accept_all": True,
-                "note": "（自动审批模式：接受全部改动）",
-                "turn": request.get("turn"),
-            }
-            self.log(
-                f"[Harness] 自动接受全部 {request.get('patch_count', 0)} 条改动。"
-            )
-            return payload
-
-        if request.get("type") == "issue_review":
-            payload = {
-                "ignore_ids": [],
-                "rules": list(self.auto_approve_constraints or []),
-                "turn": request.get("turn"),
-                "note": "（自动审批模式：问题全部进入修改）",
-            }
-            self.log(
-                f"[Harness] 自动确认 {len(request.get('issues') or [])} 个问题全部进入修改。"
-            )
-            return payload
-
-        defaults = request.get("defaults") or {}
-        issue_payload = {
-            "decision": "approve",
-            "approved_issue_ids": defaults.get("approved_issue_ids") or "all",
-            "constraints": list(
-                self.auto_approve_constraints or defaults.get("constraints") or []
-            ),
-            "feedback": "（自动审批模式：批准全部问题）",
-        }
-        self.log("[Harness] 自动批准全部问题。")
-        return issue_payload
+        return auto_response(request, self.auto_approve_constraints)
 
     def trace_summary(self) -> dict[str, Any]:
         """当前 run 的 Trace 汇总。"""

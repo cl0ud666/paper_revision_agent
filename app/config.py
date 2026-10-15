@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -19,6 +20,17 @@ from dotenv import load_dotenv
 
 # 项目根目录（app/ 的上一层）
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def validate_run_id(run_id: str) -> str:
+    """运行 ID 同时用作目录名，只允许单个安全路径组件。"""
+    if not isinstance(run_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", run_id):
+        raise ValueError("run_id 必须为 1–128 位字母、数字、下划线、连字符或点，且以字母数字开头")
+    reserved = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+    if run_id.endswith(".") or run_id.split(".")[0].upper() in reserved or run_id.lower() == "evals":
+        raise ValueError("run_id 不能使用保留目录名")
+    return run_id
+
 
 # 读取项目根目录下的 .env（文件不存在时静默跳过）
 load_dotenv(PROJECT_ROOT / ".env")
@@ -123,6 +135,34 @@ class ContextSettings:
     # Audit 精度控制
     audit_min_severity: str  # high / medium / low（默认 medium：丢掉"可改可不改"的）
     audit_max_issues: int  # 合并后的问题上限
+    # 专名核验：把全文专有名词清单单独交给模型核一遍拼写与领域惯例
+    # （"阿里云 ESC"这种，正确写法 ECS 本来就不需要出现在文中）
+    audit_name_check: bool
+    # Audit 分块并发度：分块之间没有依赖，可以并行跑。
+    # 1 = 退回串行；上限还受分块总数约束（不会为 3 个分块开 6 个线程）。
+    audit_concurrency: int
+    # 跨批对齐：所有分块跑完后，把全部分块的全部发现摆到一起再过一次，
+    # 合并"说的是同一件事"的重复项（分块之间互相看不到，只能事后对齐）。
+    audit_cross_check: bool
+    # 定向对照：把"要互相对照的两份材料"摆到一起查矛盾
+    # （摘要×结论、承诺×产出、正文数字×表格）。
+    # 比整篇送审便宜一个数量级，而且对照任务本来就该把两份材料放一起。
+    audit_targeted: bool
+    # 定向对照的 Context 预算。0 = 不截断（对照材料本来就很短）。
+    audit_targeted_tokens: int
+    # 「正文数字 × 表格」这一组最多取多少句正文数字句。
+    # 超出会被丢弃 —— 丢弃数量会打印出来，不会静默。
+    # 0 = 不限（全量送）。注意别设成很小的值，否则关键数值句会被挤掉。
+    audit_compare_sentences: int
+    # 整篇兜底核查：只在"小文档"或"其它环节一条问题都没发现"时才跑。
+    audit_whole_paper: bool
+    # 全文矛盾核查的 Context 预算。
+    # 0 = 不限；默认给一个上限，避免长论文把整次调用撑爆（它没有分块兜底）。
+    audit_whole_paper_tokens: int
+    # 整篇送审的"小文档"门槛（估算 token）：整篇不超过它就直接送。
+    audit_whole_paper_small_doc: int
+    # 跨批对齐的 Context 预算。0 = 不限：候选清单全部送进去（默认）。
+    audit_cross_check_tokens: int
     revision_max_tokens: int
     review_max_tokens: int
     prompt_head_ratio: float
@@ -148,9 +188,22 @@ class WorkflowSettings:
     agent_timeout: float
     # Audit 之后是否先问一句"这些问题有没有要忽略的"（默认开）。
     issue_gate: bool
+    # 补丁审阅闸门（默认**关**）：
+    #   False = 不打断用户，Revision 报出「原文／准备修改为／原因」后直接应用；
+    #   True  = 恢复成逐条接受/拒绝。
+    # 关掉它的理由：需要人拍板的"前后矛盾"已经在 Audit 之后问过一次，
+    # 再让用户逐条勾一边补丁属于重复劳动。
+    patch_gate: bool
+    # 写入 Word 之前的最后一次确认（默认**开**）。
+    # 前面每轮都在内存里改文本，Word 只在最后写一次，所以确认也只需一次：
+    # 把所有轮次的改动一起列出来，用户剔除掉的那几条不写进 Word。
+    final_confirm: bool
     # 审查范围：body（摘要+正文，默认）/ body+refs / all
     # 封面、目录、诚信承诺、致谢这些默认不审，避免把排版内容当论文问题。
     audit_scope: str
+    checkpoint_backend: str = "auto"
+    checkpoint_url: str = ""
+    checkpoint_pool_size: int = 5
 
 
 @dataclass(frozen=True)
@@ -209,7 +262,12 @@ class PathSettings:
     golden_set: Path
 
     def run_dir(self, run_id: str) -> Path:
-        return self.runs_dir / run_id
+        validate_run_id(run_id)
+        root = self.runs_dir.resolve()
+        target = (root / run_id).resolve()
+        if not target.is_relative_to(root) or target == root:
+            raise ValueError("运行目录必须位于 runs 根目录内")
+        return target
 
 
 @dataclass(frozen=True)
@@ -281,6 +339,21 @@ def get_settings() -> Settings:
             audit_max_chunks=_get_int("PRA_AUDIT_MAX_CHUNKS", 24),
             audit_min_severity=_get("PRA_AUDIT_MIN_SEVERITY", "medium").lower(),
             audit_max_issues=_get_int("PRA_AUDIT_MAX_ISSUES", 15),
+            audit_name_check=_get_bool("PRA_AUDIT_NAME_CHECK", True),
+            audit_concurrency=_get_int("PRA_AUDIT_CONCURRENCY", 6),
+            audit_cross_check=_get_bool("PRA_AUDIT_CROSS_CHECK", True),
+            audit_targeted=_get_bool("PRA_AUDIT_TARGETED", True),
+            audit_targeted_tokens=_get_int("PRA_AUDIT_TARGETED_TOKENS", 0),
+            audit_compare_sentences=_get_int("PRA_AUDIT_COMPARE_SENTENCES", 40),
+            audit_whole_paper=_get_bool("PRA_AUDIT_WHOLE_PAPER", True),
+            # 默认 24000：超过就按"头尾保留"截断，避免一次调用被撑爆
+            audit_whole_paper_tokens=_get_int("PRA_AUDIT_WHOLE_PAPER_TOKENS", 24000),
+            # 整篇不超过这个量就无条件送（小文档一次送审最省事）
+            # 整篇送审的门槛：正文不超过它就无条件整篇送一次。
+            # 你的论文正文约 1.7 万 token，所以这里给到 20000 让它每轮都跑。
+            # （整篇是唯一"不依赖我们枚举配对范围"的覆盖，值得这 2 万 token。）
+            audit_whole_paper_small_doc=_get_int("PRA_AUDIT_WHOLE_PAPER_SMALL_DOC", 20000),
+            audit_cross_check_tokens=_get_int("PRA_AUDIT_CROSS_CHECK_TOKENS", 0),
             revision_max_tokens=_get_int("PRA_REVISION_MAX_TOKENS", 6000),
             review_max_tokens=_get_int("PRA_REVIEW_MAX_TOKENS", 6000),
             prompt_head_ratio=_get_float("PRA_PROMPT_HEAD_RATIO", 0.6),
@@ -298,7 +371,12 @@ def get_settings() -> Settings:
             # 默认开启：Audit 之后先问一句“这些问题有没有要忽略的”，
             # 并把用户的决定持久记下来（多轮不再重复问）。
             issue_gate=_get_bool("PRA_ISSUE_GATE", True),
+            patch_gate=_get_bool("PRA_PATCH_GATE", False),
+            final_confirm=_get_bool("PRA_FINAL_CONFIRM", True),
             audit_scope=_get("PRA_AUDIT_SCOPE", "body"),
+            checkpoint_backend=_get("PRA_CHECKPOINT_BACKEND", "auto").lower(),
+            checkpoint_url=_get("PRA_CHECKPOINT_URL", ""),
+            checkpoint_pool_size=max(1, _get_int("PRA_CHECKPOINT_POOL_SIZE", 5)),
         ),
         budget=BudgetSettings(
             max_run_tokens=_get_int("PRA_BUDGET_RUN_TOKENS", 400000),
