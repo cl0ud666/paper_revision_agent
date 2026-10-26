@@ -200,11 +200,7 @@ def aggregate(records: list[dict[str, Any]]) -> dict[str, Any]:
     valid = [record for record in records if not record.get("error")]
     per_dimension: dict[str, float] = {}
     for dimension in DIMENSIONS:
-        values = [
-            record["scores"].get(dimension, 0)
-            for record in valid
-            if record.get("scores")
-        ]
+        values = [record["scores"].get(dimension, 0) for record in valid if record.get("scores")]
         per_dimension[dimension] = round(sum(values) / len(values), 3) if values else 0.0
 
     averages = [record.get("average", 0.0) for record in valid]

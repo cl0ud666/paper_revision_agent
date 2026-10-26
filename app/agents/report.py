@@ -11,11 +11,11 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from app.agents.revision import all_applied_edits, all_failed_edits
 from app.config import get_settings
 from app.document.docx_redline import applied_rounds, export_redline
+from app.document.history import all_applied_edits, all_failed_edits
 from app.utils.resilience import guard_snapshots
-from app.utils.tracing import get_recorder, utc_now
+from app.utils.tracing import utc_now
 
 SEVERITY_LABEL = {"high": "高", "medium": "中", "low": "低"}
 
@@ -721,9 +721,3 @@ def load_state_snapshot(path: str | Path) -> dict[str, Any]:
     """读取之前保存的状态快照（用于从快照继续任务）。"""
 
     return json.loads(Path(path).read_text(encoding="utf-8"))
-
-
-def current_trace_summary(run_id: str) -> dict[str, Any]:
-    """获取某个 run 的 Trace 汇总。"""
-
-    return get_recorder(run_id).summary()

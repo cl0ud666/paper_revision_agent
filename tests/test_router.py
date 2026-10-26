@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import unittest
 
+from app.workflow.nodes import normalize_human_payload
 from app.workflow.router import (
     route_after_audit,
     route_after_human,
@@ -13,7 +14,6 @@ from app.workflow.router import (
     route_after_review,
     route_from_orchestrator,
 )
-from app.workflow.nodes import normalize_human_payload
 
 FINDINGS = [
     {"id": 1, "problem": "问题一"},

@@ -1,5 +1,4 @@
 from functools import lru_cache
-from pathlib import Path
 
 import boto3
 from botocore.config import Config
@@ -12,12 +11,6 @@ DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.docu
 
 def validate_word_upload(data: bytes, filename: str) -> str:
     return validate_word(data, filename, max_bytes=settings().upload_bytes)[0]
-
-
-def validate_docx(data: bytes, filename: str) -> str:
-    if Path(filename).suffix.lower() != ".docx":
-        raise ValueError("此接口仅接受 DOCX")
-    return validate_word_upload(data, filename)
 
 
 class LocalStore:

@@ -19,7 +19,7 @@ from __future__ import annotations
 import unittest
 
 from app.agents.audit import _variation_issues
-from app.agents.revision import _unification_patches
+from app.agents.revision.patches import _unification_patches
 from app.document.spans import build_spans
 from app.utils.consistency import find_naming_variants
 from app.utils.text import looks_like_code
@@ -63,8 +63,8 @@ class TestVariationIssue(unittest.TestCase):
 
     def test_snake_case_identifiers_are_not_naming_variants(self) -> None:
         spans = build_spans(
-            "变量 FEWSHOT_QUERY_DIR 用于查询。\n\n"
-            "变量 fewshot_query_dir 仅在代码示例中出现。", version=1
+            "变量 FEWSHOT_QUERY_DIR 用于查询。\n\n变量 fewshot_query_dir 仅在代码示例中出现。",
+            version=1,
         )
         self.assertEqual(find_naming_variants(spans), [])
 
@@ -91,14 +91,10 @@ class TestUnificationPatches(unittest.TestCase):
     def test_code_is_never_touched(self) -> None:
         patches = _unification_patches(self.spans, [rule("P01：全文统一为 MOCO")])
 
-        code_ids = {
-            span.id for span in self.spans if looks_like_code(span.text)
-        }
+        code_ids = {span.id for span in self.spans if looks_like_code(span.text)}
         self.assertTrue(code_ids, "样本里应当有代码段")
         for patch in patches:
-            self.assertNotIn(
-                patch.span_id, code_ids, "代码段被改了——用户明确要求代码一律不碰"
-            )
+            self.assertNotIn(patch.span_id, code_ids, "代码段被改了——用户明确要求代码一律不碰")
 
     def test_quote_is_unique_inside_its_span(self) -> None:
         """同一段里出现两次时，quote 必须扩窗到唯一，否则补丁会被判歧义。"""
@@ -111,9 +107,7 @@ class TestUnificationPatches(unittest.TestCase):
         spans = {span.label: span.text for span in self.spans}
         for label, quotes in by_label.items():
             for quote in quotes:
-                self.assertEqual(
-                    spans[label].count(quote), 1, f"{label} 的 quote 不唯一：{quote}"
-                )
+                self.assertEqual(spans[label].count(quote), 1, f"{label} 的 quote 不唯一：{quote}")
 
 
 class TestPresentationMerge(unittest.TestCase):
@@ -185,9 +179,7 @@ class TestLabelUnion(unittest.TestCase):
         merged = _merge_issues([chunk_issue, whole_issue])
 
         self.assertEqual(len(merged), 1, "说的是同一件事就该合并成一条")
-        self.assertEqual(
-            merged[0]["span_labels"], ["P26", "P28", "P145", "P300"]
-        )
+        self.assertEqual(merged[0]["span_labels"], ["P26", "P28", "P145", "P300"])
 
 
 if __name__ == "__main__":

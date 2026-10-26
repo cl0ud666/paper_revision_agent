@@ -3,14 +3,14 @@
 
 用法：
 
-    python tests/_inspect_run.py run-20260924-174814-aa136c
+    python -m scripts.diagnostics.inspect_run <run_id>
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
-import sys
 from collections import Counter
 from pathlib import Path
 
@@ -55,7 +55,9 @@ def inspect(run_id: str) -> None:
     )
     if conflicts:
         for patch in conflicts[:6]:
-            print(f"     冲突 {patch.get('patch_id')} {patch.get('span_label')}: {patch.get('conflict_reason')}")
+            print(
+                f"     冲突 {patch.get('patch_id')} {patch.get('span_label')}: {patch.get('conflict_reason')}"
+            )
 
     calls_path = run_dir / "llm_calls.jsonl"
     if not calls_path.exists():
@@ -99,7 +101,9 @@ def inspect(run_id: str) -> None:
 
 
 def main() -> int:
-    for run_id in sys.argv[1:] or ["run-20260924-174814-aa136c"]:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("run_ids", nargs="+")
+    for run_id in parser.parse_args().run_ids:
         inspect(run_id)
     return 0
 

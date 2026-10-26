@@ -3,22 +3,22 @@
 python /verification/verify_word_formats.py --output /qa
 No credentials, model calls, database writes, or uploaded user documents.
 """
+
 import argparse
-import io
 import json
-from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import zipfile
+from pathlib import Path
 
 from docx import Document
 from lxml import etree
 
 from app.document.docx_model import DocxSource, w
 from app.document.docx_redline import export_redline
-from app.document.word_formats import normalize_word, validate_word
 from app.document.spans import build_spans
+from app.document.word_formats import normalize_word, validate_word
 
 
 def main():
@@ -41,10 +41,26 @@ def main():
         document.save(source)
         results = []
         soffice = shutil.which("soffice")
-        for suffix, filter_name in (("doc", "MS Word 97"), ("rtf", "Rich Text Format"), ("odt", "writer8")):
-            subprocess.run([soffice, f"-env:UserInstallation={(root / ('profile-' + suffix)).as_uri()}",
-                            "--headless", "--convert-to", f"{suffix}:{filter_name}", "--outdir", str(root), str(source)],
-                           check=True, timeout=60, capture_output=True)
+        for suffix, filter_name in (
+            ("doc", "MS Word 97"),
+            ("rtf", "Rich Text Format"),
+            ("odt", "writer8"),
+        ):
+            subprocess.run(
+                [
+                    soffice,
+                    f"-env:UserInstallation={(root / ('profile-' + suffix)).as_uri()}",
+                    "--headless",
+                    "--convert-to",
+                    f"{suffix}:{filter_name}",
+                    "--outdir",
+                    str(root),
+                    str(source),
+                ],
+                check=True,
+                timeout=60,
+                capture_output=True,
+            )
             legacy = (root / f"fixture.{suffix}").read_bytes()
             _, kind = validate_word(legacy, f"fixture.{suffix}")
             assert kind == suffix
@@ -55,8 +71,16 @@ def main():
             assert "85.2" in model.text
             span = next(s for s in build_spans(model.text) if "MoCo" in s.text)
             start = span.text.index("MoCo")
-            patch = {"patch_id": "smoke-1", "span_label": span.label, "before": "MoCo", "quote": "MoCo",
-                     "replace": "MOCO", "rationale": "按作者确认的术语写法统一。", "start_in_span": start, "end_in_span": start + 4}
+            patch = {
+                "patch_id": "smoke-1",
+                "span_label": span.label,
+                "before": "MoCo",
+                "quote": "MoCo",
+                "replace": "MOCO",
+                "rationale": "按作者确认的术语写法统一。",
+                "start_in_span": start,
+                "end_in_span": start + 4,
+            }
             target = output / f"{suffix}-revised.docx"
             outcome = export_redline(normalized, [[patch]], str(target))
             assert not outcome.skipped and outcome.comments == 1

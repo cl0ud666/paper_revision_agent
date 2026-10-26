@@ -1,8 +1,8 @@
 # 当前 Prompt 原文导出
 
-来源：`app/agents/prompts.py`。仅导出静态模板，不读取运行记录、密钥或论文。
+来源：`app/agents/prompts/`。仅导出静态模板，不读取运行记录、密钥或论文。
 `{{CONTEXT}}` 是运行时上下文占位符；编排示例参数为第 1 轮、上限 3 次。
-整理与改写提案见 `prompt_redesign.md`。本文件不是已启用的新配置。
+整理与改写提案见 `prompt_redesign.md`。本文件是当前模板快照；修改请编辑源码并重新导出。
 
 ## 编排 / Orchestrator
 

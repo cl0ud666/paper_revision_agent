@@ -156,8 +156,8 @@ graph TD
 ### 8. 多轮会话
 
 ```python
-result = harness.start("请全面检查并修改这篇论文。", document)   # 第 1 轮
-result = harness.resume({"excluded_ids": ["patch-003"]})         # 写入确认
+result = harness.start("请全面检查并修改这篇论文。", document)  # 第 1 轮
+result = harness.resume({"excluded_ids": ["patch-003"]})  # 写入确认
 result = harness.follow_up("取消 R1；把引言里关于小样本困难的段落写得更具体")  # 第 2 轮
 ```
 
@@ -297,7 +297,7 @@ python main.py --text "摘要太啰嗦" --request "只修改摘要，不要审�
 from app.utils.loaders import load_document, load_bytes
 
 loaded = load_document("D:/我的论文.docx")
-print(loaded.describe())      # docx，2060 字符，34 段
+print(loaded.describe())  # docx，2060 字符，34 段
 document = loaded.text
 
 # 界面/接口上传是字节流：
@@ -313,12 +313,12 @@ harness.start("全面检查并修改", document, rules=["全文统一把「土�
 while result.is_interrupted:
     request = result.pending_request
     if request["type"] == "issue_review":
-        payload = {"rules": ["温度系数以 0.07 为准"]}     # 在 a/b/c 里挑，或写自己的判断
+        payload = {"rules": ["温度系数以 0.07 为准"]}  # 在 a/b/c 里挑，或写自己的判断
     elif request["type"] == "patch_review":
         patch_ids = [p["patch_id"] for p in request["patches"]]
-        payload = {"accepted_ids": patch_ids[:3]}          # 只接受前 3 条
-    else:                                                  # final_confirm
-        payload = {"excluded_ids": []}                     # 回车 = 全部写入
+        payload = {"accepted_ids": patch_ids[:3]}  # 只接受前 3 条
+    else:  # final_confirm
+        payload = {"excluded_ids": []}  # 回车 = 全部写入
     result = harness.resume(payload)
 
 # 多轮：可以顺手改要求（记住：… / 取消 R1 / R1 改成 …）

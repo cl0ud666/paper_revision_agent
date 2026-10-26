@@ -130,13 +130,12 @@ class TestDocxLoading(unittest.TestCase):
         try:
             from docx import Document
             from docx.oxml import OxmlElement
-            from docx.oxml.ns import qn
         except ImportError:  # pragma: no cover
             self.skipTest("未安装 python-docx")
 
         document = Document()
         document.add_heading("3 方法", level=2)
-        paragraph = document.add_paragraph("损失函数如下：")
+        document.add_paragraph("损失函数如下：")
 
         math_paragraph = document.add_paragraph()
         omath = OxmlElement("m:oMath")
@@ -163,7 +162,7 @@ class TestDocxLoading(unittest.TestCase):
             '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
             ' xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">'
             "<w:body><w:p>"
-            '<w:r><w:t>损失函数为 </w:t></w:r>'
+            "<w:r><w:t>损失函数为 </w:t></w:r>"
             "<m:oMath><m:r><m:t>L=-log p</m:t></m:r></m:oMath>"
             "</w:p></w:body></w:document>"
         )
@@ -177,7 +176,7 @@ class TestDocxLoading(unittest.TestCase):
     def test_docx_via_python_docx(self) -> None:
         loaded = load_bytes(make_docx(), filename="paper.docx")
         self.assertEqual(loaded.format, "docx")
-        self.assertIn("# 论文标题", loaded.text)     # 标题层级被保留
+        self.assertIn("# 论文标题", loaded.text)  # 标题层级被保留
         self.assertIn("## 摘要", loaded.text)
         self.assertIn("新的方法", loaded.text)
         self.assertIn("| 方法 | 准确率 |", loaded.text)  # 表格转成 Markdown

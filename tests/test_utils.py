@@ -55,7 +55,7 @@ class TestJsonUtils(unittest.TestCase):
         self.assertEqual(extract_json(text), {"problem": "使用 {花括号} 说明", "id": 2})
 
     def test_curly_quotes(self) -> None:
-        text = '{\u201cstatus\u201d: \u201cfail\u201d}'
+        text = "{\u201cstatus\u201d: \u201cfail\u201d}"
         self.assertEqual(extract_json(text), {"status": "fail"})
 
     def test_garbage_raises(self) -> None:
@@ -131,7 +131,9 @@ class TestEdits(unittest.TestCase):
         self.assertEqual(result.applied[0]["strategy"], "fuzzy-paragraph")
 
     def test_not_found_goes_to_failed(self) -> None:
-        result = apply_edits("原文内容。", [{"issue_id": 3, "find": "不存在的句子。", "replace": "x"}])
+        result = apply_edits(
+            "原文内容。", [{"issue_id": 3, "find": "不存在的句子。", "replace": "x"}]
+        )
         self.assertEqual(result.applied, [])
         self.assertEqual(result.failed[0]["reason"], "not_found")
         self.assertEqual(result.document, "原文内容。")
@@ -237,7 +239,11 @@ class TestContext(unittest.TestCase):
         self.assertNotIn("approved_issues", fields)
 
     def test_audit_context_contains_chunk(self) -> None:
-        fields = build_context(self.state, "audit", extra={"chunk_text": "片段内容", "chunk_index": 0, "chunk_total": 2})
+        fields = build_context(
+            self.state,
+            "audit",
+            extra={"chunk_text": "片段内容", "chunk_index": 0, "chunk_total": 2},
+        )
         self.assertEqual(fields["chunk_text"], "片段内容")
         self.assertNotIn("human_constraints", fields)
 

@@ -168,10 +168,7 @@ class TestPatchValidation(unittest.TestCase):
         self.assertIn("未生成具体的替换内容", patch.conflict_reason)
 
     def test_duplicate_quote_inside_span_is_conflict_but_cross_span_is_fine(self) -> None:
-        text = (
-            "## 摘要\n\n方法有效。方法有效。\n\n"
-            "## 结论\n\n方法有效。\n"
-        )
+        text = "## 摘要\n\n方法有效。方法有效。\n\n## 结论\n\n方法有效。\n"
         spans = build_spans(text)
         duplicate_span, unique_span = spans[1], spans[3]  # 两个段落（0/2 是标题）
 
@@ -394,7 +391,9 @@ class TestPatchDecisionsAndApply(unittest.TestCase):
 
     def test_overlapping_patches_are_flagged(self) -> None:
         first = self.patch(self.abstract, "效果比较好", "表现更好", "patch-001")
-        second = self.patch(self.abstract, "效果比较好。实验结果表明我们的方法更好。", "整体更好。", "patch-002")
+        second = self.patch(
+            self.abstract, "效果比较好。实验结果表明我们的方法更好。", "整体更好。", "patch-002"
+        )
         decide_patch(first, "accept")
         decide_patch(second, "accept")
 
@@ -499,9 +498,7 @@ class TestModelPayloadTolerance(unittest.TestCase):
         self.assertIn("（1）", patch.replace)
 
     def test_strip_sentence_markers_directly(self) -> None:
-        self.assertEqual(
-            strip_sentence_markers("(1) 第一句。 (2) 第二句。"), "第一句。 第二句。"
-        )
+        self.assertEqual(strip_sentence_markers("(1) 第一句。 (2) 第二句。"), "第一句。 第二句。")
         self.assertEqual(strip_sentence_markers("(1) 只有一条"), "(1) 只有一条")
 
 

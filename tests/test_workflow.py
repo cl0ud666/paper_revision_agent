@@ -131,7 +131,9 @@ class TestHappyPath(WorkflowTestCase):
         self.assertIn(IMPROVED_SENTENCE, result.revised_document)
         self.assertNotIn(ISSUE_SENTENCE, result.revised_document)
         self.assertEqual(len(result.state["applied_patches"]), 1)
-        self.assertEqual(result.state["patch_stats"]["applied"] + result.state["patch_stats"]["accepted"], 1)
+        self.assertEqual(
+            result.state["patch_stats"]["applied"] + result.state["patch_stats"]["accepted"], 1
+        )
         self.assertTrue(result.report_path)
         self.assertTrue(Path(result.report_path).exists())
         self.assertTrue(Path(result.document_path).exists())
@@ -289,8 +291,8 @@ class TestHappyPath(WorkflowTestCase):
         )
 
         marked = {issue["id"]: issue.get("ignored") for issue in update["audit_findings"]}
-        self.assertTrue(marked[1])          # 被点名的忽略
-        self.assertFalse(marked.get(2))     # 没点名的不动
+        self.assertTrue(marked[1])  # 被点名的忽略
+        self.assertFalse(marked.get(2))  # 没点名的不动
 
         kinds = {rule["kind"] for rule in update["user_rules"]}
         self.assertEqual(kinds, {"ignore", "rule"})
@@ -338,9 +340,7 @@ class TestDecisionGate(WorkflowTestCase):
 
         self.assertTrue(result.is_interrupted, "决策闸门没有停下来")
         self.assertEqual(result.pending_request["type"], "issue_review")
-        self.assertEqual(
-            [issue["id"] for issue in result.pending_request["issues"]], [1]
-        )
+        self.assertEqual([issue["id"] for issue in result.pending_request["issues"]], [1])
 
         # 用户的判断会被记成规则，Revision 拿得到
         result = harness.resume({"rules": ["温度系数以 0.07 为准"]})
@@ -428,9 +428,7 @@ class TestReplanningImpl(WorkflowTestCase):
         )
 
         harness = Harness(auto_approve=True, logger=lambda message: None)
-        result = harness.run_to_completion(
-            "请全面检查并修改这篇论文。", DOC, max_iterations=2
-        )
+        result = harness.run_to_completion("请全面检查并修改这篇论文。", DOC, max_iterations=2)
 
         self.assertEqual(result.status, "completed")
         # 达到迭代上限后熔断，输出当前最优结果

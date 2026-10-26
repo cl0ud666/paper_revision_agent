@@ -24,7 +24,9 @@ FastAPI 保存任务后返回任务编号。任务和 Outbox 在同一事务提�
 
 | 模块 | 负责什么 | 不应承担什么 |
 | --- | --- | --- |
-| `app/web/api.py` | 参数、身份、HTTP 返回 | 调用模型或等待整篇论文完成 |
+| `app/web/api.py` | 应用组装、中间件、健康检查 | 承载所有业务接口 |
+| `app/web/routes/` | 按认证、任务、用户分组的 HTTP 接口 | 调用模型或等待整篇论文完成 |
+| `app/web/dependencies.py`、`schemas.py` | 共享身份依赖、Cookie、请求结构 | 业务事务或文件写回 |
 | `app/web/service.py` | 业务事务、归属校验、额度、决策提交 | 文档 XML 编辑 |
 | `app/web/worker.py` | 执行片段、心跳、模型额度、任务结果存储 | 前端展示规则 |
 | `app/workflow/nodes.py` | Agent 调用、状态迁移、人工暂停 | 解析界面特有的输入 |
@@ -33,9 +35,16 @@ FastAPI 保存任务后返回任务编号。任务和 Outbox 在同一事务提�
 | `app/agents/audit.py` | 并发审查、跨章节对照、全篇核查 | Word 写回 |
 | `app/agents/audit_context.py` | 从原文选择专名、章节和数字对照材料 | 调用模型或改写原文 |
 | `app/agents/audit_findings.py` | 审查证据验证、合并、筛选 | 外部服务调用 |
+| `app/agents/prompts/` | 按角色组织模板、复用共享约束 | 藏入业务执行逻辑 |
+| `app/agents/revision/agent.py` | 修订批次编排、模型生成和一次校验重试 | HTTP 或 DOCX 写入 |
+| `app/agents/revision/targets.py` | 问题范围、关联原文、用户选择和明确要求 | 模型调用 |
+| `app/agents/revision/patches.py` | 术语补丁、代码保护、拒绝记忆和无效候选过滤 | 文件存储 |
+| `app/document/history.py` | 读出当前与旧快照中的应用/失败记录 | 依赖具体 Agent |
 | `app/document/patches.py` | 补丁状态、定位和内存文本修改 | 直接接受模型的任意原文位置 |
 | `app/document/final_review.py` | 多轮修改归并到原稿坐标 | 把独立复核的不确定性全部报成写回失败 |
 | `app/document/docx_redline.py` | 在原 DOCX 上写入修订和批注 | 重写整篇文档以规避结构限制 |
+| `app/document/structured.py`、`operations/` | 结构操作调度；验证、XML、表格、公式分别实现 | 恢复已关闭的新增引用或表格能力 |
+| `frontend/src/features/review/` | 审阅视图、布局联动 hook、人工事项展示 | 修改补丁语义或绕过后端确认 |
 
 `app/service/runs.py` 是本机 CLI / Streamlit 的运行管理器；`app/web/service.py` 是多用户部署的业务服务。二者共享 Harness 和交互协议，但并发与持久化实现不同，不是两份可随意互换的后端。
 
@@ -60,6 +69,6 @@ FastAPI 保存任务后返回任务编号。任务和 Outbox 在同一事务提�
 
 ## 当前仍有的复杂度
 
-审查调度、DOCX 原生修订和可视化审阅仍是较大的模块。它们包含跨段落证据、XML 对象保护和多轮回放，不适合为了缩短文件而拆成相互循环依赖的小文件。后续扩展时优先沿“审查策略”“结构操作”“预览交互”边界拆分，并保留端到端回归。
+审查调度和 DOCX 原生修订仍是较大的模块。它们包含跨段落证据、XML 对象保护和多轮回放，不适合为了缩短文件而拆成相互循环依赖的小文件。结构操作与预览交互已经独立；后续拆分应保持端到端回归，不用增加抽象层来代替减少重复逻辑。
 
 部署用依赖有固定版本与范围混用，Python 安装尚不是完整跨平台锁定；不要把当前 requirements 文件称为可重现锁文件。高并发、任意不可信文档转换隔离、存储保留周期仍需独立运维设计。

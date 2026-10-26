@@ -22,7 +22,7 @@ from app.utils.llm import reset_llm_factory, set_llm_factory
 from app.utils.resilience import reset_guards
 from app.utils.tracing import reset_recorders
 from evals import regression, runner
-from evals.judges import JUDGE_HEADER, DIMENSIONS, judge_pair
+from evals.judges import DIMENSIONS, JUDGE_HEADER, judge_pair
 from tests.fakes import (
     audit_response,
     fake_factory,
@@ -157,8 +157,6 @@ class TestGoldenSetLoading(EvaluationTestCase):
 class TestEvaluateRun(EvaluationTestCase):
     def test_evaluate_writes_results(self) -> None:
         # Review 也用假模型返回 pass
-        from app.agents.prompts import REVIEW_HEADER
-        from tests.fakes import review_response
 
         set_llm_factory(
             fake_factory(

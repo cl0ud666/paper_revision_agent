@@ -217,10 +217,15 @@ class TestRedline(unittest.TestCase):
         span = next(s for s in build_spans(source_text) if "FEWSHOT_QUERY_DIR" in s.text)
         start = span.text.index("FEWSHOT_QUERY_DIR")
         stale_patch = Patch(
-            "patch-older", span.id, span_label=span.label,
-            quote="FEWSHOT_QUERY_DIR", before="FEWSHOT_QUERY_DIR",
-            replace="fewshot_query_dir", status=STATUS_APPLIED,
-            start_in_span=start, end_in_span=start + len("FEWSHOT_QUERY_DIR"),
+            "patch-older",
+            span.id,
+            span_label=span.label,
+            quote="FEWSHOT_QUERY_DIR",
+            before="FEWSHOT_QUERY_DIR",
+            replace="fewshot_query_dir",
+            status=STATUS_APPLIED,
+            start_in_span=start,
+            end_in_span=start + len("FEWSHOT_QUERY_DIR"),
         )
         result, output = export(data.getvalue(), [[stale_patch.to_json()]])
         self.assertEqual(result.applied, [])
@@ -268,9 +273,7 @@ class TestRedline(unittest.TestCase):
         )
         result, _ = export(self.data, [rounds])
 
-        expected = self.text.replace(
-            "取得了更好的效果", "取得了更好的效果（在 5 个数据集上验证）"
-        )
+        expected = self.text.replace("取得了更好的效果", "取得了更好的效果（在 5 个数据集上验证）")
         self.assertEqual(result.text, expected)
         self.assertEqual(result.text, new_text)
 
@@ -297,7 +300,7 @@ class TestRedline(unittest.TestCase):
         self.assertEqual(len(result.applied), 0)
         self.assertEqual(len(result.skipped), 1)
         self.assertEqual(result.text, self.text)
-        self.assertIn("公式受到保护", result.skipped[0]['reason'])
+        self.assertIn("公式受到保护", result.skipped[0]["reason"])
 
     def test_partial_change_reaching_into_formula_is_refused(self) -> None:
         """
@@ -347,9 +350,7 @@ class TestRedline(unittest.TestCase):
         self.assertIn("【公式：", DocxSource(out_bytes).text)
 
     def test_table_cell_change_is_applied(self) -> None:
-        new_text, rounds = applied_round(
-            self.text, label="T01", quote="85.2", replace="87.4"
-        )
+        new_text, rounds = applied_round(self.text, label="T01", quote="85.2", replace="87.4")
         result, out_bytes = export(self.data, [rounds])
 
         self.assertEqual(len(result.applied), 1, result.skipped)
@@ -398,7 +399,9 @@ class TestRedline(unittest.TestCase):
 
     def test_replacement_comment_is_one_original_to_final_statement(self):
         from lxml import etree
+
         from app.document.docx_model import w
+
         for paragraph, intermediate, final in (
             ("本文采用 MoCo 方法。", "Moco", "MOCO"),
             ("MoCo", "Moco", "MOCO"),
@@ -411,8 +414,12 @@ class TestRedline(unittest.TestCase):
                 raw = io.BytesIO()
                 document.save(raw)
                 text = DocxSource(raw.getvalue()).text
-                first_text, first = applied_round(text, label="P01", quote="MoCo", replace=intermediate)
-                final_text, second = applied_round(first_text, label="P01", quote=intermediate, replace=final)
+                first_text, first = applied_round(
+                    text, label="P01", quote="MoCo", replace=intermediate
+                )
+                final_text, second = applied_round(
+                    first_text, label="P01", quote=intermediate, replace=final
+                )
                 outcome, output = export(raw.getvalue(), [first, second])
                 self.assertEqual(outcome.skipped, [])
                 self.assertEqual(outcome.text, final_text)
@@ -440,15 +447,26 @@ class TestRedline(unittest.TestCase):
                                 parent.insert(index, child)
                                 index += 1
                         parent.remove(node)
-                    content = "".join(n.text or "" for n in projected.iter() if n.tag in {w("t"), w("delText")})
+                    content = "".join(
+                        n.text or "" for n in projected.iter() if n.tag in {w("t"), w("delText")}
+                    )
                     self.assertEqual(content, (final_text if accept else text).rstrip("\n"))
 
     def test_full_rewrite_after_partial_edit_has_no_nested_revisions(self):
         from lxml import etree
+
         from app.document.docx_model import w
-        first_text, first = applied_round(self.text, label="P01", quote="更好的效果", replace="更稳定的效果")
+
+        first_text, first = applied_round(
+            self.text, label="P01", quote="更好的效果", replace="更稳定的效果"
+        )
         replacement = "本文方法在三个公开数据集上取得稳定提升。"
-        _, second = applied_round(first_text, label="P01", quote=BODY.replace("更好的效果", "更稳定的效果"), replace=replacement)
+        _, second = applied_round(
+            first_text,
+            label="P01",
+            quote=BODY.replace("更好的效果", "更稳定的效果"),
+            replace=replacement,
+        )
         result, output = export(self.data, [first, second])
         self.assertEqual(result.skipped, [])
         root = etree.fromstring(part(output, "word/document.xml").encode())
@@ -459,18 +477,29 @@ class TestRedline(unittest.TestCase):
 
     def test_consolidation_preserves_preexisting_comments_and_anchor_ids(self):
         from lxml import etree
+
         from app.document.docx_model import w
         from app.document.docx_redline import RedlineWriter
+
         source = DocxSource(self.data)
         writer = RedlineWriter(source)
-        paragraph = next(p for p in source.document_root.iter(w("p")) if BODY in "".join(p.itertext(w("t"))))
+        paragraph = next(
+            p for p in source.document_root.iter(w("p")) if BODY in "".join(p.itertext(w("t")))
+        )
         writer.note_on_paragraph(paragraph, "作者原有批注，不应被删除")
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "original.docx"
             source.save(str(path))
             original = path.read_bytes()
-        text, first = applied_round(self.text, label="P01", quote="更好的效果", replace="更稳定的效果")
-        _, second = applied_round(text, label="P01", quote=BODY.replace("更好的效果", "更稳定的效果"), replace="本文方法在三个公开数据集上取得稳定提升。")
+        text, first = applied_round(
+            self.text, label="P01", quote="更好的效果", replace="更稳定的效果"
+        )
+        _, second = applied_round(
+            text,
+            label="P01",
+            quote=BODY.replace("更好的效果", "更稳定的效果"),
+            replace="本文方法在三个公开数据集上取得稳定提升。",
+        )
         result, output = export(original, [first, second])
         self.assertEqual(result.comments, 1)
         root = etree.fromstring(part(output, "word/document.xml").encode())
@@ -484,7 +513,9 @@ class TestRedline(unittest.TestCase):
             self.assertEqual(len(anchors), len(ids))
 
     def test_round_trip_without_comments_also_removes_noop_revisions(self):
-        text, first = applied_round(self.text, label="P01", quote="更好的效果", replace="更稳定的效果")
+        text, first = applied_round(
+            self.text, label="P01", quote="更好的效果", replace="更稳定的效果"
+        )
         _, second = applied_round(text, label="P01", quote="更稳定的效果", replace="更好的效果")
         result, output = export(self.data, [first, second], comments=False)
         self.assertEqual(result.text, self.text)
@@ -527,7 +558,18 @@ class TestRedline(unittest.TestCase):
 
         document = Document()
         paragraph = document.add_paragraph()
-        for piece in ["本", "文提", "出的方", "法在", "三个", "公开", "数据集上", "取得了", "更好的", "效果。"]:
+        for piece in [
+            "本",
+            "文提",
+            "出的方",
+            "法在",
+            "三个",
+            "公开",
+            "数据集上",
+            "取得了",
+            "更好的",
+            "效果。",
+        ]:
             paragraph.add_run(piece)
         buffer = io.BytesIO()
         document.save(buffer)
@@ -555,9 +597,7 @@ class TestRedline(unittest.TestCase):
         self.assertEqual(len(result.applied), 1, result.skipped)
         self.assertEqual(result.text, new_text)
         with zipfile.ZipFile(io.BytesIO(out_bytes)) as archive:
-            self.assertTrue(
-                any(name.startswith("word/media/") for name in archive.namelist())
-            )
+            self.assertTrue(any(name.startswith("word/media/") for name in archive.namelist()))
 
     def test_pure_deletion_is_tracked(self) -> None:
         """删除类改动：只留删除痕迹，不插入任何文字。"""
@@ -582,7 +622,9 @@ class TestRedline(unittest.TestCase):
         self.assertEqual(len(result.applied), 1, result.skipped)
         self.assertEqual(result.text, outcome.document)
         self.assertNotIn("为了验证有效性", result.text)
-        self.assertIn("<w:delText>为了验证有效性，</w:delText>", part(out_bytes, "word/document.xml"))
+        self.assertIn(
+            "<w:delText>为了验证有效性，</w:delText>", part(out_bytes, "word/document.xml")
+        )
 
     def test_document_without_settings_part_is_wired_up(self) -> None:
         """
@@ -908,9 +950,7 @@ class TestCitationFields(unittest.TestCase):
 
         self.assertEqual(result.applied, [])
         self.assertEqual(len(result.skipped), 1)
-        self.assertIn(
-            "这条改动需要同步后面文献引用", result.skipped[0]["reason"]
-        )
+        self.assertIn("这条改动需要同步后面文献引用", result.skipped[0]["reason"])
 
     def test_change_before_the_field_is_still_writable(self) -> None:
         """不碰域的改动照旧能写回——不能因为文档里有引文就整体摆烂。"""
@@ -934,53 +974,78 @@ class TestCitationFields(unittest.TestCase):
 class TestOriginalRevisionBoundaries(unittest.TestCase):
     def test_term_across_old_insertion_keeps_unedited_revision(self):
         from app.document.docx_model import w
+
         document = Document()
-        paragraph = document.add_paragraph('方法 Mo')
-        insertion = OxmlElement('w:ins')
-        insertion.set(w('author'), '原作者')
-        insertion.set(w('id'), '99')
-        run = OxmlElement('w:r')
-        node = OxmlElement('w:t'); node.text = 'CO 和旧修订保留'
-        run.append(node); insertion.append(run); paragraph._p.append(insertion)
-        paragraph.add_run('。')
-        buffer = io.BytesIO(); document.save(buffer); data = buffer.getvalue()
+        paragraph = document.add_paragraph("方法 Mo")
+        insertion = OxmlElement("w:ins")
+        insertion.set(w("author"), "原作者")
+        insertion.set(w("id"), "99")
+        run = OxmlElement("w:r")
+        node = OxmlElement("w:t")
+        node.text = "CO 和旧修订保留"
+        run.append(node)
+        insertion.append(run)
+        paragraph._p.append(insertion)
+        paragraph.add_run("。")
+        buffer = io.BytesIO()
+        document.save(buffer)
+        data = buffer.getvalue()
         text = DocxSource(data).text
-        _, changes = applied_round(text, label=build_spans(text)[0].label, quote='MoCO', replace='MoCo')
+        _, changes = applied_round(
+            text, label=build_spans(text)[0].label, quote="MoCO", replace="MoCo"
+        )
         result, output = export(data, [changes])
         self.assertEqual(result.skipped, [])
-        self.assertEqual(DocxSource(output).text, text.replace('MoCO', 'MoCo'))
+        self.assertEqual(DocxSource(output).text, text.replace("MoCO", "MoCo"))
         self.assertEqual(result.comments, 1)
         root = DocxSource(output).document_root
-        old = [n for n in root.iter(w('ins')) if n.get(w('author')) == '原作者']
-        self.assertEqual(''.join(n.text or '' for x in old for n in x.iter(w('t'))), ' 和旧修订保留')
-        self.assertIn('MoCO', ''.join(n.text or '' for n in root.iter(w('delText'))))
+        old = [n for n in root.iter(w("ins")) if n.get(w("author")) == "原作者"]
+        self.assertEqual(
+            "".join(n.text or "" for x in old for n in x.iter(w("t"))), " 和旧修订保留"
+        )
+        self.assertIn("MoCO", "".join(n.text or "" for n in root.iter(w("delText"))))
 
     def test_several_text_nodes_in_one_run_do_not_lose_neighbours(self):
-        document = Document(); paragraph = document.add_paragraph()
+        document = Document()
+        paragraph = document.add_paragraph()
         run = paragraph.add_run()._r
-        for value in ['原文 ', 'MoCO', ' 和 ', 'batch', ' 保留尾部']:
-            node = OxmlElement('w:t'); node.text = value; run.append(node)
-        buffer = io.BytesIO(); document.save(buffer); data = buffer.getvalue()
-        text = DocxSource(data).text; label = build_spans(text)[0].label
-        _, one = applied_round(text, label=label, quote='MoCO', replace='MoCo')
-        _, two = applied_round(text, label=label, quote='batch', replace='批次')
-        two[0]['patch_id'] = 'patch-002'
+        for value in ["原文 ", "MoCO", " 和 ", "batch", " 保留尾部"]:
+            node = OxmlElement("w:t")
+            node.text = value
+            run.append(node)
+        buffer = io.BytesIO()
+        document.save(buffer)
+        data = buffer.getvalue()
+        text = DocxSource(data).text
+        label = build_spans(text)[0].label
+        _, one = applied_round(text, label=label, quote="MoCO", replace="MoCo")
+        _, two = applied_round(text, label=label, quote="batch", replace="批次")
+        two[0]["patch_id"] = "patch-002"
         result, output = export(data, [one + two])
         self.assertEqual(result.skipped, [])
-        self.assertEqual(DocxSource(output).text, text.replace('MoCO', 'MoCo').replace('batch', '批次'))
+        self.assertEqual(
+            DocxSource(output).text, text.replace("MoCO", "MoCo").replace("batch", "批次")
+        )
         self.assertEqual(result.comments, 2)
 
     def test_one_term_spans_multiple_text_nodes_in_same_run(self):
-        document = Document(); paragraph = document.add_paragraph('方法 ')
+        document = Document()
+        paragraph = document.add_paragraph("方法 ")
         run = paragraph.add_run()._r
-        for value in ['Mo', 'CO', ' 保留']:
-            node = OxmlElement('w:t'); node.text = value; run.append(node)
-        buffer = io.BytesIO(); document.save(buffer); data = buffer.getvalue()
+        for value in ["Mo", "CO", " 保留"]:
+            node = OxmlElement("w:t")
+            node.text = value
+            run.append(node)
+        buffer = io.BytesIO()
+        document.save(buffer)
+        data = buffer.getvalue()
         text = DocxSource(data).text
-        _, changes = applied_round(text, label=build_spans(text)[0].label, quote='MoCO', replace='MoCo')
+        _, changes = applied_round(
+            text, label=build_spans(text)[0].label, quote="MoCO", replace="MoCo"
+        )
         result, output = export(data, [changes])
         self.assertEqual(result.skipped, [])
-        self.assertEqual(DocxSource(output).text, text.replace('MoCO', 'MoCo'))
+        self.assertEqual(DocxSource(output).text, text.replace("MoCO", "MoCo"))
 
 
 if __name__ == "__main__":

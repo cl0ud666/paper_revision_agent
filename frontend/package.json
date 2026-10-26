@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test:e2e": "playwright test",
     "test:ui": "playwright test --config playwright.ui.config.ts",
+    "test:preview": "playwright test --config playwright.preview.config.ts",
     "format": "prettier --write src *.ts *.json index.html e2e",
     "format:check": "prettier --check src *.ts *.json index.html e2e",
     "typecheck": "tsc -b"

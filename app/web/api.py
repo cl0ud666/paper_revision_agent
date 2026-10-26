@@ -1,22 +1,16 @@
-import json
-import logging
-import os
-from typing import Annotated, Any
-from urllib.parse import quote
+"""FastAPI composition: middleware, error translation, health and routes."""
 
-from fastapi import Depends, FastAPI, File, Form, Request, Response, UploadFile
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
 from sqlalchemy import text
 from starlette.concurrency import run_in_threadpool
 
 from app.web import service
 from app.web.db import engine
-from app.web.queue import login_rate_limit, registration_rate_limit
+from app.web.routes import auth, runs, users
 from app.web.settings import settings
 
 app = FastAPI(title="论文修改工作台", version="0.1.0")
-COOKIE = "paper_session"
 
 
 @app.exception_handler(service.ApiError)
@@ -36,55 +30,6 @@ async def origin_check(request: Request, call_next):
     return response
 
 
-async def current_user(request: Request):
-    return await run_in_threadpool(
-        service.identity,
-        request.cookies.get(COOKIE, ""),
-        request.headers.get("x-csrf-token"),
-        write=request.method not in {"GET", "HEAD", "OPTIONS"},
-    )
-
-
-async def admin(user=Depends(current_user)):
-    if not user["is_admin"]:
-        raise service.ApiError(403, "仅管理员可以执行此操作")
-    return {**user, "demo": os.getenv("PRA_WEB_DEMO", "0") == "1"}
-
-
-class LoginBody(BaseModel):
-    username: str = Field(min_length=3, max_length=80)
-    password: str = Field(min_length=1, max_length=128)
-
-
-class RegisterBody(LoginBody):
-    password: str = Field(min_length=6, max_length=128)
-
-
-def client_ip(request: Request):
-    # Only enabled behind our private nginx, which overwrites this header.
-    if os.getenv("PRA_TRUST_PROXY_IP", "0") == "1":
-        return request.headers.get("x-real-ip") or request.client.host
-    return request.client.host
-
-
-class DecisionBody(BaseModel):
-    pending_id: str = Field(min_length=36, max_length=36)
-    version: int = Field(ge=1)
-    payload: dict[str, Any]
-
-
-class NewUserBody(LoginBody):
-    password: str = Field(min_length=6, max_length=128)
-    daily_run_limit: int = Field(default=5, ge=1, le=1000)
-    run_token_limit: int = Field(default=400000, ge=1000, le=5000000)
-
-
-class UserUpdateBody(BaseModel):
-    active: bool | None = None
-    daily_run_limit: int | None = Field(default=None, ge=1, le=1000)
-    run_token_limit: int | None = Field(default=None, ge=1000, le=5000000)
-
-
 @app.get("/api/v1/health")
 async def health():
     def check():
@@ -98,177 +43,5 @@ async def health():
     return {"status": "ok"}
 
 
-@app.post("/api/v1/auth/login")
-async def login(body: LoginBody, request: Request, response: Response):
-    try:
-        await run_in_threadpool(login_rate_limit, client_ip(request), body.username)
-    except service.ApiError:
-        raise
-    except Exception:
-        raise service.ApiError(503, "登录服务暂时不可用") from None
-    token, user = await run_in_threadpool(service.login, body.username, body.password)
-    response.set_cookie(
-        COOKIE,
-        token,
-        httponly=True,
-        secure=settings().secure_cookie,
-        samesite="lax",
-        max_age=settings().session_days * 86400,
-        path="/",
-    )
-    return {**user, "demo": os.getenv("PRA_WEB_DEMO", "0") == "1"}
-
-
-@app.get("/api/v1/auth/options")
-async def auth_options():
-    return {"registration_open": settings().registration_open, "free_runs": settings().free_runs}
-
-
-@app.post("/api/v1/auth/register", status_code=201)
-async def register(body: RegisterBody, request: Request, response: Response):
-    if not settings().registration_open:
-        raise service.ApiError(403, "注册暂未开放，请联系管理员")
-    try:
-        await run_in_threadpool(registration_rate_limit, client_ip(request))
-    except service.ApiError:
-        raise
-    except Exception:
-        raise service.ApiError(503, "注册服务暂时不可用") from None
-    token, user = await run_in_threadpool(service.register, body.username, body.password)
-    response.set_cookie(
-        COOKIE,
-        token,
-        httponly=True,
-        secure=settings().secure_cookie,
-        samesite="lax",
-        max_age=settings().session_days * 86400,
-        path="/",
-    )
-    return user
-
-
-@app.get("/api/v1/users/me")
-async def me(user=Depends(current_user)):
-    return {**user, "demo": os.getenv("PRA_WEB_DEMO", "0") == "1"}
-
-
-@app.post("/api/v1/auth/logout")
-async def logout(request: Request, response: Response, user=Depends(current_user)):
-    await run_in_threadpool(service.logout, request.cookies.get(COOKIE, ""))
-    response.delete_cookie(COOKIE, path="/")
-    return {"ok": True}
-
-
-@app.post("/api/v1/runs", status_code=202)
-async def upload(
-    file: Annotated[UploadFile, File()],
-    request: Annotated[str, Form()] = "全面检查并修改这篇论文",
-    rules: Annotated[str, Form()] = '["不要修改实验结果与数据"]',
-    user=Depends(current_user),
-):
-    try:
-        constraints = json.loads(rules)
-        if not isinstance(constraints, list) or any(not isinstance(r, str) for r in constraints):
-            raise ValueError()
-    except (ValueError, TypeError):
-        raise service.ApiError(400, "修改要求应为字符串列表") from None
-    chunks, size = [], 0
-    try:
-        while chunk := await file.read(1024 * 1024):
-            size += len(chunk)
-            if size > settings().upload_bytes:
-                raise service.ApiError(413, "文件超过上传大小限制")
-            chunks.append(chunk)
-        try:
-            return await run_in_threadpool(
-                service.create_run,
-                user["id"],
-                b"".join(chunks),
-                file.filename or "",
-                request,
-                constraints,
-            )
-        except service.ApiError:
-            raise
-        except Exception:
-            logging.exception("Upload storage/database operation failed")
-            raise service.ApiError(503, "文件保存失败，请稍后再试") from None
-    finally:
-        await file.close()
-
-
-@app.get("/api/v1/runs")
-async def runs(user=Depends(current_user)):
-    return await run_in_threadpool(service.list_runs, user["id"])
-
-
-@app.get("/api/v1/runs/{run_id}")
-async def run_detail(run_id: str, user=Depends(current_user)):
-    return await run_in_threadpool(service.get_run, user["id"], run_id)
-
-
-@app.get("/api/v1/runs/{run_id}/events")
-async def events(run_id: str, cursor: int = 0, latest: bool = False, user=Depends(current_user)):
-    return await run_in_threadpool(
-        service.get_events, user["id"], run_id, max(0, cursor), latest=latest
-    )
-
-
-@app.get("/api/v1/runs/{run_id}/preview/{number}")
-async def preview_page(run_id: str, number: int, fingerprint: str, user=Depends(current_user)):
-    data = await run_in_threadpool(service.preview_page, user["id"], run_id, number, fingerprint)
-    return Response(
-        data,
-        media_type="image/png",
-        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
-    )
-
-
-@app.post("/api/v1/runs/{run_id}/decisions", status_code=202)
-async def decisions(run_id: str, body: DecisionBody, user=Depends(current_user)):
-    return await run_in_threadpool(
-        service.submit_decision, user["id"], run_id, body.pending_id, body.version, body.payload
-    )
-
-
-@app.post("/api/v1/runs/{run_id}/cancel")
-async def cancel(run_id: str, user=Depends(current_user)):
-    return await run_in_threadpool(service.cancel, user["id"], run_id)
-
-
-@app.post("/api/v1/runs/{run_id}/retry", status_code=202)
-async def retry(run_id: str, user=Depends(current_user)):
-    return await run_in_threadpool(service.retry, user["id"], run_id)
-
-
-@app.get("/api/v1/runs/{run_id}/download")
-async def download(run_id: str, kind: str = "document", user=Depends(current_user)):
-    if kind not in {"document", "report"}:
-        raise service.ApiError(400, "未知的文件类型")
-    data, name, mime = await run_in_threadpool(service.download, user["id"], run_id, kind)
-    return Response(
-        data,
-        media_type=mime,
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"},
-    )
-
-
-@app.get("/api/v1/admin/users")
-async def users(user=Depends(admin)):
-    return await run_in_threadpool(service.users)
-
-
-@app.post("/api/v1/admin/users", status_code=201)
-async def create_user(body: NewUserBody, user=Depends(admin)):
-    return await run_in_threadpool(
-        service.add_user,
-        body.username,
-        body.password,
-        daily_runs=body.daily_run_limit,
-        run_tokens=body.run_token_limit,
-    )
-
-
-@app.patch("/api/v1/admin/users/{user_id}")
-async def update_user(user_id: str, body: UserUpdateBody, user=Depends(admin)):
-    return await run_in_threadpool(service.update_user, user_id, body.model_dump(exclude_none=True))
+for router in (auth.router, runs.router, users.router):
+    app.include_router(router, prefix="/api/v1")

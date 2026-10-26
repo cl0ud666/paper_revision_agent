@@ -1,13 +1,13 @@
 """
 只读排查脚本：看一份文档被解析成什么结构、哪些块会被跳过。
 
-用法：python tests/_inspect_structure.py <file-or-run-dir>
+用法：python -m scripts.diagnostics.inspect_structure <file-or-run-dir>
 """
 
 from __future__ import annotations
 
+import argparse
 import json
-import sys
 from collections import Counter
 from pathlib import Path
 
@@ -25,7 +25,9 @@ def resolve(target: str) -> tuple[str, str]:
 
 
 def main() -> int:
-    for target in sys.argv[1:]:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("targets", nargs="+")
+    for target in parser.parse_args().targets:
         document, name = resolve(target)
         spans = build_spans(document)
         report = structure_report(spans)

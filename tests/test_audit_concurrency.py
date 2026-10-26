@@ -14,7 +14,6 @@ Audit 并发审查 + 跨批对齐 + 全文矛盾核查测试。
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import shutil
@@ -226,7 +225,11 @@ class TestChunkConcurrency(AuditConcurrencyTestCase):
         update = self.run_audit(
             {
                 AUDIT_HEADER: self.chunk_reporting(
-                    {1: "句子成分残缺，缺少主语", 2: "论证跳跃，缺少必要的过渡", 3: "结论表述过于绝对"},
+                    {
+                        1: "句子成分残缺，缺少主语",
+                        2: "论证跳跃，缺少必要的过渡",
+                        3: "结论表述过于绝对",
+                    },
                     delays={1: 0.05, 2: 0.05, 3: 0.05},
                 )
             },
@@ -243,7 +246,11 @@ class TestChunkConcurrency(AuditConcurrencyTestCase):
         update = self.run_audit(
             {
                 AUDIT_HEADER: self.chunk_reporting(
-                    {1: "句子成分残缺，缺少主语", 2: "论证跳跃，缺少必要的过渡", 3: "结论表述过于绝对"},
+                    {
+                        1: "句子成分残缺，缺少主语",
+                        2: "论证跳跃，缺少必要的过渡",
+                        3: "结论表述过于绝对",
+                    },
                     delays={1: 0.02, 2: 0.02, 3: 0.02},
                 )
             },
@@ -354,11 +361,7 @@ class TestCrossCheck(AuditConcurrencyTestCase):
             if index > 2:
                 return audit_response([])
             label = _first_label(prompt)
-            problem = (
-                "句子成分残缺，缺少主语"
-                if index == 1
-                else "论证跳跃，缺少必要的过渡"
-            )
+            problem = "句子成分残缺，缺少主语" if index == 1 else "论证跳跃，缺少必要的过渡"
             return audit_response(
                 [
                     {
@@ -394,11 +397,7 @@ class TestCrossCheck(AuditConcurrencyTestCase):
             if index > 2:
                 return audit_response([])
             label = _first_label(prompt)
-            problem = (
-                "句子成分残缺，缺少主语"
-                if index == 1
-                else "论证跳跃，缺少必要的过渡"
-            )
+            problem = "句子成分残缺，缺少主语" if index == 1 else "论证跳跃，缺少必要的过渡"
             return audit_response(
                 [
                     {
@@ -505,11 +504,7 @@ class TestGracefulDegradation(AuditConcurrencyTestCase):
             if index > 2:
                 return audit_response([])
             label = _first_label(prompt)
-            problem = (
-                "句子成分残缺，缺少主语"
-                if index == 1
-                else "论证跳跃，缺少必要的过渡"
-            )
+            problem = "句子成分残缺，缺少主语" if index == 1 else "论证跳跃，缺少必要的过渡"
             return audit_response(
                 [
                     {
@@ -571,9 +566,7 @@ class TestGracefulDegradation(AuditConcurrencyTestCase):
 
         self.assertTrue(update["audit_failed"])
         self.assertEqual(update["audit_findings"], [])
-        self.assertEqual(
-            update["audit_meta"]["failed_chunks"], update["audit_meta"]["chunks"]
-        )
+        self.assertEqual(update["audit_meta"]["failed_chunks"], update["audit_meta"]["chunks"])
 
 
 class TestTwoPassesAreFused(AuditConcurrencyTestCase):
@@ -587,11 +580,7 @@ class TestTwoPassesAreFused(AuditConcurrencyTestCase):
             if index > 2:
                 return audit_response([])
             label = _first_label(prompt)
-            problem = (
-                "参考文献格式不统一，缺少出版信息"
-                if index == 1
-                else "结论部分的措辞过于绝对"
-            )
+            problem = "参考文献格式不统一，缺少出版信息" if index == 1 else "结论部分的措辞过于绝对"
             return audit_response(
                 [
                     {
@@ -702,9 +691,7 @@ class TestWholePaperInput(AuditConcurrencyTestCase):
             prompts.append(prompt)
             return whole_paper_response([])
 
-        update = self.run_audit(
-            {AUDIT_HEADER: audit_response([]), WHOLE_PAPER_HEADER: respond}
-        )
+        update = self.run_audit({AUDIT_HEADER: audit_response([]), WHOLE_PAPER_HEADER: respond})
 
         self.assertTrue(update["audit_meta"]["whole_paper"])
         self.assertFalse(update["audit_meta"]["whole_paper_truncated"])
@@ -729,9 +716,7 @@ class TestWholePaperInput(AuditConcurrencyTestCase):
             prompts.append(prompt)
             return whole_paper_response([])
 
-        update = self.run_audit(
-            {AUDIT_HEADER: audit_response([]), WHOLE_PAPER_HEADER: respond}
-        )
+        update = self.run_audit({AUDIT_HEADER: audit_response([]), WHOLE_PAPER_HEADER: respond})
 
         self.assertTrue(update["audit_meta"]["whole_paper_truncated"])
         self.assertIn("……（此处省略约", prompts[0])
@@ -807,12 +792,12 @@ class TestTargetedChecks(AuditConcurrencyTestCase):
         meta = update["audit_meta"]
         # 摘要×结论 / 摘要承诺×各章产出 / 正文数字×表格
         keys = [item["key"] for item in meta["targeted"]]
-        self.assertEqual(
-            keys, ["abstract_conclusion", "promise_outcome", "numbers_tables"]
-        )
+        self.assertEqual(keys, ["abstract_conclusion", "promise_outcome", "numbers_tables"])
         self.assertEqual(meta["targeted_found"], 3)
         self.assertTrue(update["audit_findings"])
-        self.assertIn("targeted:abstract_conclusion", [i.get("source") for i in update["audit_findings"]])
+        self.assertIn(
+            "targeted:abstract_conclusion", [i.get("source") for i in update["audit_findings"]]
+        )
 
         # 对照材料里必须**同时**出现两份材料，而不是整篇
         self.assertIn("=== 材料 A ===", prompts[0])

@@ -220,15 +220,6 @@ def run(
     return update
 
 
-def _mentions_rejected(item: dict[str, Any], rejected_ids: set[str]) -> bool:
-    """判断复核意见是否只是在说“某个被拒绝的改动没做”。"""
-
-    text = " ".join(str(item.get(key, "")) for key in ("reason", "id"))
-    if any(patch_id in text for patch_id in rejected_ids):
-        return True
-    return "拒绝" in text and "未" in text
-
-
 def _consistency_issues(state: Any, document: str) -> list[dict[str, Any]]:
     """
     跨批次一致性（确定性检查，不依赖模型）。

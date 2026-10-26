@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { api, type Run, type Unfinished } from './api'
+import { api, type Run } from '../../api'
 import './visual-review.css'
-import { QuotedText } from './QuotedText'
+import { ManualDetails } from './ManualItems'
+import { useReviewLayout, scrollInside } from './useReviewLayout'
 
 export function VisualReview({ run }: { run: Run }) {
   const pending = run.pending!,
@@ -21,14 +22,9 @@ export function VisualReview({ run }: { run: Run }) {
   const [page, setPage] = useState(patches[0]?.rects?.[0]?.page || 1)
   const [focused, setFocused] = useState(patches[0]?.patch_id || '')
   const [zoom, setZoom] = useState(95)
-  const [paperWidth, setPaperWidth] = useState(0)
   const [loaded, setLoaded] = useState(''),
     [imageError, setImageError] = useState(false),
     [retry, setRetry] = useState(0)
-  const [arrow, setArrow] = useState('')
-  const board = useRef<HTMLDivElement>(null),
-    cards = useRef<HTMLDivElement>(null),
-    paper = useRef<HTMLDivElement>(null)
   const imageKey = `${page}-${retry}`
   const submit = useMutation({
     mutationFn: () =>
@@ -65,80 +61,15 @@ export function VisualReview({ run }: { run: Run }) {
     }
   }
   const currentPage = pages.find((p) => p.number === page)
-  useEffect(() => {
-    if (!pages.length) return
-    // Enter the review workspace with the whole page in the viewport. Further
-    // card navigation never scrolls the document or the preview pane.
-    const frame = requestAnimationFrame(() =>
-      board.current?.parentElement?.scrollIntoView({ block: 'start' }),
-    )
-    return () => cancelAnimationFrame(frame)
-  }, [pending.id])
-  useEffect(() => {
-    const pane = paper.current
-    if (!pane || !currentPage) return
-    const resize = () => {
-      const css = getComputedStyle(pane)
-      const width = pane.clientWidth - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight)
-      const height = pane.clientHeight - parseFloat(css.paddingTop) - parseFloat(css.paddingBottom)
-      // The initial 95% view fits the page. User zoom is applied afterwards,
-      // never clamped back to fit: increasing the control really enlarges it.
-      setPaperWidth(
-        Math.max(
-          0,
-          (Math.min(width, (height * currentPage.width) / currentPage.height) * zoom) / 95,
-        ),
-      )
-    }
-    const observer = new ResizeObserver(resize)
-    observer.observe(pane)
-    resize()
-    return () => observer.disconnect()
-  }, [currentPage?.width, currentPage?.height, zoom])
-  useEffect(() => {
-    const root = board.current
-    if (!root) return
-    function draw() {
-      const card = cards.current?.querySelector<HTMLElement>(`[data-card="${focused}"]`)
-      const mark = paper.current?.querySelector<HTMLElement>(`[data-highlight="${focused}"]`)
-      if (!card || !mark || loaded !== imageKey || !cards.current || !paper.current) {
-        setArrow('')
-        return
-      }
-      const r = root!.getBoundingClientRect(),
-        a = card.getBoundingClientRect(),
-        b = mark.getBoundingClientRect(),
-        c = cards.current.getBoundingClientRect(),
-        d = paper.current.getBoundingClientRect()
-      if (
-        a.bottom < c.top ||
-        a.top > c.bottom ||
-        b.bottom < d.top ||
-        b.top > d.bottom ||
-        b.left > d.right ||
-        b.right < d.left
-      ) {
-        setArrow('')
-        return
-      }
-      const x = a.right - r.left,
-        y = Math.max(c.top + 8, Math.min(c.bottom - 8, a.top + a.height / 2)) - r.top
-      const tx = Math.max(d.left, b.left) - r.left,
-        ty = b.top + b.height / 2 - r.top
-      setArrow(`M ${x} ${y} C ${x + 28} ${y}, ${tx - 28} ${ty}, ${tx} ${ty}`)
-    }
-    draw()
-    const observer = new ResizeObserver(draw)
-    observer.observe(root)
-    if (paper.current) observer.observe(paper.current)
-    root.addEventListener('scroll', draw, true)
-    window.addEventListener('resize', draw)
-    return () => {
-      observer.disconnect()
-      root.removeEventListener('scroll', draw, true)
-      window.removeEventListener('resize', draw)
-    }
-  }, [focused, page, paperWidth, loaded, imageKey, selected])
+  const { board, cards, paper, paperWidth, arrow } = useReviewLayout({
+    pendingId: pending.id,
+    currentPage,
+    zoom,
+    focused,
+    loaded,
+    imageKey,
+    selected,
+  })
   return (
     <section className="visual-review" aria-label="最终分页确认">
       <div className="review-heading">
@@ -308,22 +239,6 @@ export function VisualReview({ run }: { run: Run }) {
                       <small className="kept-original">已取消 · 将保留原文</small>
                     )}
                     {patch.review_note && <p className="muted">{patch.review_note}</p>}
-                    {patch.params?.source_verification && (
-                      <p className="muted">
-                        {patch.params.source_verification.verification}{' '}
-                        {patch.params.source_verification.source_url?.startsWith(
-                          'https://doi.org/',
-                        ) && (
-                          <a
-                            href={patch.params.source_verification.source_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            核对文献来源 ↗
-                          </a>
-                        )}
-                      </p>
-                    )}
                   </article>
                 ))}
               </div>
@@ -457,87 +372,5 @@ export function VisualReview({ run }: { run: Run }) {
         </button>
       </div>
     </section>
-  )
-}
-
-function scrollInside(container: HTMLElement | null, selector: string) {
-  const target = container?.querySelector<HTMLElement>(selector)
-  if (!container || !target) return
-  const outer = container.getBoundingClientRect(),
-    inner = target.getBoundingClientRect()
-  if (inner.top < outer.top + 24 || inner.bottom > outer.bottom - 24) {
-    container.scrollTo({
-      top: Math.max(0, container.scrollTop + inner.top - outer.top - 40),
-      behavior: 'smooth',
-    })
-  }
-}
-
-export function UnfinishedBox({ run }: { run: Run }) {
-  const items = (run.summary.unfinished || []).filter((item) =>
-    ['manual', 'blocked', 'not_selected'].includes(item.kind || ''),
-  )
-  if (!items.length) return null
-  const labels: Record<string, string> = {
-    not_selected: '按你的选择保留',
-    blocked: '未写入',
-    verification: '检查限制',
-    unresolved: '待核对',
-  }
-  return (
-    <section className="unfinished-box" aria-label="未完成的修改及原因">
-      <h2>未完成的修改及原因</h2>
-      <p>这里列出确认时已告知的人工修改事项，以及确认后未写入或被取消的修改。</p>
-      {items.length ? (
-        <ol>
-          {items.map((item, index) => (
-            <li key={index}>
-              {['manual', 'blocked'].includes(item.kind || '') ? (
-                <ManualDetails item={item} />
-              ) : (
-                <>
-                  <span className="unfinished-kind">{labels[item.kind || ''] || '待核对'}</span>
-                  <strong>{item.title}</strong>
-                  {item.position && <small>{item.position}</small>}
-                  <p>原因：{item.reason}</p>
-                </>
-              )}
-            </li>
-          ))}
-        </ol>
-      ) : null}
-    </section>
-  )
-}
-
-function ManualDetails({ item }: { item: Unfinished }) {
-  return (
-    <>
-      <strong>{item.title}</strong>
-      {item.position && <p>{item.position}</p>}
-      {item.evidence && (
-        <blockquote>
-          <strong>{item.evidence}</strong>
-        </blockquote>
-      )}
-      <p>
-        <b>无法修改，需人工修改。</b>
-      </p>
-      <p>
-        <strong>无法修改的原因：</strong>
-        <QuotedText text={item.blocked_reason || item.reason} evidence={item.evidence} />
-      </p>
-      <p>
-        <strong>修改建议：</strong>
-        <QuotedText
-          text={item.suggestion || '请结合原文人工完成此项修改'}
-          evidence={item.evidence}
-        />
-      </p>
-      <p>
-        <strong>原因：</strong>
-        <QuotedText text={item.reason} evidence={item.evidence} />
-      </p>
-    </>
   )
 }

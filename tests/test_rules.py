@@ -13,7 +13,7 @@ from pathlib import Path
 
 from app.config import reset_settings
 from app.utils import rules as rules_module
-from app.utils.llm import set_llm_factory, reset_llm_factory
+from app.utils.llm import reset_llm_factory, set_llm_factory
 from app.utils.resilience import AgentGuard, CircuitBreaker, RetryPolicy, reset_guards
 from app.utils.tracing import reset_recorders
 from tests.fakes import FakeChatModel, fake_factory
@@ -105,9 +105,7 @@ class TestRuleStore(unittest.TestCase):
         self.assertEqual(len(created), 2)
         self.assertTrue(issues[0].get("ignored") is None)
 
-        rules2, created2 = rules_module.apply_payload(
-            rules, {"ignore_ids": [2]}, issues=issues
-        )
+        rules2, created2 = rules_module.apply_payload(rules, {"ignore_ids": [2]}, issues=issues)
         self.assertEqual(len(created2), 1)
         self.assertTrue(issues[1]["ignored"])
 

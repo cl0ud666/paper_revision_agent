@@ -1,4 +1,5 @@
 """部署前回归：精确暂停恢复、交互协议、并发容量、路径与最终确认。"""
+
 from __future__ import annotations
 
 import importlib.util
@@ -28,16 +29,19 @@ class DeploymentTestCase(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="pra-deployment-")
         self.root = Path(self.temp.name)
-        self.environment = patch.dict(os.environ, {
-            "PRA_DATA_DIR": str(self.root),
-            "PRA_RUNS_DIR": str(self.root / "runs"),
-            "PRA_CHECKPOINT_DB": str(self.root / "checkpoints" / "test.sqlite"),
-            "PRA_CHECKPOINT_BACKEND": "sqlite",
-            "PRA_CHECKPOINT_URL": "",
-            "PRA_PATCH_GATE": "0",
-            "PRA_FINAL_CONFIRM": "1",
-            "PRA_RETRY_MAX_ATTEMPTS": "1",
-        })
+        self.environment = patch.dict(
+            os.environ,
+            {
+                "PRA_DATA_DIR": str(self.root),
+                "PRA_RUNS_DIR": str(self.root / "runs"),
+                "PRA_CHECKPOINT_DB": str(self.root / "checkpoints" / "test.sqlite"),
+                "PRA_CHECKPOINT_BACKEND": "sqlite",
+                "PRA_CHECKPOINT_URL": "",
+                "PRA_PATCH_GATE": "0",
+                "PRA_FINAL_CONFIRM": "1",
+                "PRA_RETRY_MAX_ATTEMPTS": "1",
+            },
+        )
         self.environment.start()
         reset_settings()
         reset_guards()
@@ -80,7 +84,9 @@ class TestPendingRecovery(DeploymentTestCase):
         self.assertEqual(applied_rounds(state), [])
         persisted = json.loads(recovered.state_path.read_text(encoding="utf-8"))
         self.assertEqual(persisted["excluded_patch_ids"], ["patch-001"])
-        self.assertEqual(json.loads(recovered.session_path.read_text(encoding="utf-8"))["pending_request"], {})
+        self.assertEqual(
+            json.loads(recovered.session_path.read_text(encoding="utf-8"))["pending_request"], {}
+        )
         # 下一轮自动确认仍保留上轮剔除结果，不会重新导出被拒绝的修改。
         harness = recovered._harness
         result = harness.follow_up("继续按原要求检查")
@@ -102,7 +108,10 @@ class TestPendingRecovery(DeploymentTestCase):
         self.assertEqual(recovered.pending["type"], "final_confirm")
 
     def test_issue_choices_survive_restart(self):
-        session = RunManager().create(RunOptions(user_request="全面检查", document="# 正文\n\nMoCo 与 MOCO 均用于实验。"), run_id="naming-choice")
+        session = RunManager().create(
+            RunOptions(user_request="全面检查", document="# 正文\n\nMoCo 与 MOCO 均用于实验。"),
+            run_id="naming-choice",
+        )
         set_llm_factory(fake_factory({"*": {}}))
         session.start()
         wait_for(session, {"awaiting_human", "failed"})
@@ -122,7 +131,20 @@ class TestPendingRecovery(DeploymentTestCase):
 
 class TestRunSafety(DeploymentTestCase):
     def test_bad_ids_are_rejected_at_all_entry_points(self):
-        for bad in ("../outside", "..", "", "C:\\outside", "/outside", "safe/../outside", "a\\b", "CON.txt", "LPT1", "trailing.", "evals", "x" * 129):
+        for bad in (
+            "../outside",
+            "..",
+            "",
+            "C:\\outside",
+            "/outside",
+            "safe/../outside",
+            "a\\b",
+            "CON.txt",
+            "LPT1",
+            "trailing.",
+            "evals",
+            "x" * 129,
+        ):
             with self.subTest(run_id=bad):
                 with self.assertRaises(ValueError):
                     validate_run_id(bad)
@@ -183,10 +205,21 @@ class TestRunSafety(DeploymentTestCase):
         manager = RunManager(max_concurrent=1)
         session = manager.create(self.options(), run_id="slot-generation")
         another = manager.create(self.options(), run_id="other-slot")
-        old_finish, new_finish, new_entered = threading.Event(), threading.Event(), threading.Event()
+        old_finish, new_finish, new_entered = (
+            threading.Event(),
+            threading.Event(),
+            threading.Event(),
+        )
 
         def old_run():
-            session._apply_result(RunResult(session.run_id, session.thread_id, "interrupted", interrupts=[{"type": "final_confirm", "patches": []}]))
+            session._apply_result(
+                RunResult(
+                    session.run_id,
+                    session.thread_id,
+                    "interrupted",
+                    interrupts=[{"type": "final_confirm", "patches": []}],
+                )
+            )
             old_finish.wait(5)
 
         def resumed_run():
@@ -194,7 +227,10 @@ class TestRunSafety(DeploymentTestCase):
             new_finish.wait(5)
             session._apply_result(RunResult(session.run_id, session.thread_id, "completed"))
 
-        with patch.object(session, "_entry_start", old_run), patch.object(session, "_entry_resume", side_effect=lambda payload: resumed_run()):
+        with (
+            patch.object(session, "_entry_start", old_run),
+            patch.object(session, "_entry_resume", side_effect=lambda payload: resumed_run()),
+        ):
             session.start()
             old_thread = session._thread
             wait_for(session, {"awaiting_human"})
@@ -221,31 +257,57 @@ class TestRunSafety(DeploymentTestCase):
 
     def test_cli_auto_mode_forwards_rule(self):
         import main
+
         created = []
+
         def factory(**kwargs):
             harness = Harness(**kwargs)
             created.append(harness)
             return harness
+
         with patch.object(main, "Harness", side_effect=factory), patch("builtins.print"):
-            self.assertEqual(main.main(["--text", DOC, "--auto-approve", "--rule", "全文统一为「MOCO」"]), 0)
-        self.assertIn("全文统一为「MOCO」", [r["text"] for r in created[0].current_state()["user_rules"]])
+            self.assertEqual(
+                main.main(["--text", DOC, "--auto-approve", "--rule", "全文统一为「MOCO」"]), 0
+            )
+        self.assertIn(
+            "全文统一为「MOCO」", [r["text"] for r in created[0].current_state()["user_rules"]]
+        )
 
 
 class TestInteractionProtocol(unittest.TestCase):
     def test_group_exclusion_uses_display_numbers_and_all_members(self):
         patches = [
-            {"patch_id": "patch-001", "span_label": "P01", "strategy": "unification", "rationale": "全文统一为「MOCO」"},
-            {"patch_id": "patch-002", "span_label": "P02", "strategy": "unification", "rationale": "全文统一为「MOCO」"},
+            {
+                "patch_id": "patch-001",
+                "span_label": "P01",
+                "strategy": "unification",
+                "rationale": "全文统一为「MOCO」",
+            },
+            {
+                "patch_id": "patch-002",
+                "span_label": "P02",
+                "strategy": "unification",
+                "rationale": "全文统一为「MOCO」",
+            },
             {"patch_id": "patch-003", "strategy": "replacement"},
         ]
         request = {"type": "final_confirm", "patches": _merge_unification_items(patches)}
-        self.assertEqual(prepare_response(request, {"excluded_ids": [1]})["excluded_ids"], ["patch-001", "patch-002"])
-        self.assertEqual(prepare_response(request, {"excluded_ids": [2]})["excluded_ids"], ["patch-003"])
+        self.assertEqual(
+            prepare_response(request, {"excluded_ids": [1]})["excluded_ids"],
+            ["patch-001", "patch-002"],
+        )
+        self.assertEqual(
+            prepare_response(request, {"excluded_ids": [2]})["excluded_ids"], ["patch-003"]
+        )
         with self.assertRaises(ValueError):
             prepare_response(request, {"excluded_ids": [99]})
 
     def test_structured_choices_and_stale_responses(self):
-        request = {"type": "issue_review", "turn": 2, "issues": [{"id": 4, "options": ["全文统一为「MOCO」", "全文统一为「moco」"]}]}
+        request = {
+            "type": "issue_review",
+            "turn": 2,
+            "issues": [{"id": 4, "options": ["全文统一为「MOCO」", "全文统一为「moco」"]}],
+        }
         response = prepare_response(request, {"choices": {"4": 1}})
         self.assertIn("全文统一为「moco」", response["rules"][0])
         self.assertEqual(response["turn"], 2)
@@ -259,15 +321,27 @@ class TestInteractionProtocol(unittest.TestCase):
             dispatch_request({"type": "new_unknown_gate"}, {})
 
 
-@unittest.skipUnless(importlib.util.find_spec("langgraph.checkpoint.postgres"), "安装 requirements-web.txt 后验证 PostgreSQL 适配层")
+@unittest.skipUnless(
+    importlib.util.find_spec("langgraph.checkpoint.postgres"),
+    "安装 requirements-web.txt 后验证 PostgreSQL 适配层",
+)
 class TestPostgresConfiguration(DeploymentTestCase):
     def setUp(self):
         super().setUp()
         # 先导入真实的类，再替换工厂；避免第三方 isinstance 引用到 Mock。
-        import langgraph.checkpoint.postgres
+        importlib.import_module("langgraph.checkpoint.postgres")
 
     def test_postgres_pool_cached_per_process_and_closed(self):
-        with patch.dict(os.environ, {"PRA_CHECKPOINT_BACKEND": "postgres", "PRA_CHECKPOINT_URL": "postgresql://user:secret@localhost/test"}), patch("psycopg_pool.ConnectionPool") as pool_class:
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "PRA_CHECKPOINT_BACKEND": "postgres",
+                    "PRA_CHECKPOINT_URL": "postgresql://user:secret@localhost/test",
+                },
+            ),
+            patch("psycopg_pool.ConnectionPool") as pool_class,
+        ):
             reset_settings()
             saver = build_checkpointer()
             self.assertIs(build_checkpointer(), saver)
@@ -277,7 +351,16 @@ class TestPostgresConfiguration(DeploymentTestCase):
             pool_class.return_value.close.assert_called_once()
 
     def test_postgres_failure_does_not_fall_back_to_memory_or_expose_password(self):
-        with patch.dict(os.environ, {"PRA_CHECKPOINT_BACKEND": "postgres", "PRA_CHECKPOINT_URL": "postgresql://user:secret@localhost/test"}), patch("psycopg_pool.ConnectionPool") as pool_class:
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "PRA_CHECKPOINT_BACKEND": "postgres",
+                    "PRA_CHECKPOINT_URL": "postgresql://user:secret@localhost/test",
+                },
+            ),
+            patch("psycopg_pool.ConnectionPool") as pool_class,
+        ):
             reset_settings()
             pool_class.return_value.wait.side_effect = RuntimeError("secret")
             with self.assertRaises(RuntimeError) as error:
@@ -291,10 +374,18 @@ class TestPostgresConfiguration(DeploymentTestCase):
             factory.return_value.setup.assert_called_once()
 
 
-@unittest.skipUnless(os.getenv("PRA_TEST_POSTGRES_URL"), "未配置专用 PostgreSQL 测试库 PRA_TEST_POSTGRES_URL")
+@unittest.skipUnless(
+    os.getenv("PRA_TEST_POSTGRES_URL"), "未配置专用 PostgreSQL 测试库 PRA_TEST_POSTGRES_URL"
+)
 class TestRealPostgresRecovery(DeploymentTestCase):
     def test_pause_and_resume_after_recreating_pool(self):
-        with patch.dict(os.environ, {"PRA_CHECKPOINT_BACKEND": "postgres", "PRA_CHECKPOINT_URL": os.environ["PRA_TEST_POSTGRES_URL"]}):
+        with patch.dict(
+            os.environ,
+            {
+                "PRA_CHECKPOINT_BACKEND": "postgres",
+                "PRA_CHECKPOINT_URL": os.environ["PRA_TEST_POSTGRES_URL"],
+            },
+        ):
             reset_settings()
             setup_checkpointer()
             session = RunManager().create(self.options())
@@ -306,4 +397,6 @@ class TestRealPostgresRecovery(DeploymentTestCase):
             recovered.resume({"excluded_ids": ["patch-001"]})
             wait_for(recovered, {"completed", "failed"}, timeout=30)
             self.assertEqual(recovered.status, "completed", recovered.error)
-            self.assertEqual(recovered._harness.current_state()["excluded_patch_ids"], ["patch-001"])
+            self.assertEqual(
+                recovered._harness.current_state()["excluded_patch_ids"], ["patch-001"]
+            )

@@ -63,7 +63,13 @@ def findings(name: str, raw: bytes) -> list[str]:
     )
     if b"\0" in raw or len(raw) > 2_000_000:
         return results
-    for number, line in enumerate(raw.decode("utf-8", errors="replace").splitlines(), 1):
+    try:
+        source = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return results + [f"{name}: text is not valid UTF-8"]
+    for number, line in enumerate(source.splitlines(), 1):
+        if "\ufffd" in line:
+            results.append(f"{name}:{number}: damaged text contains a replacement character")
         for label, pattern in SECRET_PATTERNS.items():
             if pattern.search(line):
                 results.append(f"{name}:{number}: possible {label} (value redacted)")

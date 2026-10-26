@@ -7,7 +7,7 @@
 
 | 环节 | 当前位置 | 输入与职责 | 主要风险 |
 | --- | --- | --- | --- |
-| 编排 | prompts.py / render_orchestrator_prompt | 用户任务、约束、摘要、上轮结果 → 分配阶段 | 上游自由文本 instructions 可能重新解释用户约束 |
+| 编排 | prompts/planning.py / render_orchestrator_prompt | 用户任务、约束、摘要、上轮结果 → 分配阶段 | 上游自由文本 instructions 可能重新解释用户约束 |
 | 分块审查 | render_audit_prompt | 当前文本块、扫描候选 → 问题 | 承担九类任务，混合找错、建议、口径判断；大量个例与硬约束 |
 | 专名核验 | render_name_check_prompt | 名称与上下文 → 拼写候选 | System 还要求判断“合不合适”，与仅校对拼写的模板不一致；领域常识可能被当成事实 |
 | 跨批对齐 | render_cross_check_prompt | 各块候选 → 去重、新问题 | 同时去重和新增问题；输出缺 kind/options |
@@ -16,7 +16,7 @@
 | 修改 | render_patch_prompt | 问题、用户选择、当前块 → 补丁 | 要一次输出全文所有修改，却只拿到片段；不给补丁时无处放 rationale 建议 |
 | 复核 | render_review_prompt | 变更前后、接受/拒绝记录 → pass/fail | 承诺只验授权范围，又要求任何关键未解决问题都 fail，容易反复改 |
 
-提示词并不只有 prompts.py：
+角色模板现在位于 `app/agents/prompts/`；提示词还包含以下运行时组装内容：
 
 - `app/utils/context.py` 决定每个环节实际能看到什么，包含 user_rules、ignored_issues、rejected_memory、chunk_text 等。
 - `TRIM_ORDER` 优先裁 document_outline、chunk_text；后面也可能裁 approved_issues、rejected_memory。提示词说“全部遵守”，但可见证据可能已不完整。

@@ -92,8 +92,7 @@ class TestReviewChecks(unittest.TestCase):
 
         self.assertEqual(update["review_result"]["status"], "fail")
         problems = " ".join(
-            issue.get("problem", "")
-            for issue in update["review_result"]["remaining_issues"]
+            issue.get("problem", "") for issue in update["review_result"]["remaining_issues"]
         )
         self.assertIn("重复", problems)
 
@@ -117,7 +116,10 @@ class TestReviewChecks(unittest.TestCase):
 
     def test_clean_case_can_pass(self) -> None:
         set_llm_factory(fake_factory({REVIEW_HEADER: review_response("pass")}))
-        improved = PARAGRAPH.replace("负责利用图结构信息", "负责利用图结构信息并给出实现细节") + "\n\n第二段内容。\n"
+        improved = (
+            PARAGRAPH.replace("负责利用图结构信息", "负责利用图结构信息并给出实现细节")
+            + "\n\n第二段内容。\n"
+        )
         update = review_agent.run(base_state(improved), logger=lambda message: None)
 
         self.assertEqual(update["review_result"]["status"], "pass")
@@ -131,7 +133,9 @@ class TestReviewChecks(unittest.TestCase):
         from app.utils.context import build_context
 
         state = base_state(PARAGRAPH + "\n\n第二段内容。\n")
-        fields = build_context(state, "review", extra={"revised_excerpt": state["current_document"]})
+        fields = build_context(
+            state, "review", extra={"revised_excerpt": state["current_document"]}
+        )
         self.assertNotIn("chunk_text", fields)
         self.assertIn("revised_excerpt", fields)
 

@@ -26,7 +26,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.utils.call_policy import get_policy
-from app.utils.tracing import get_recorder, utc_now
+from app.utils.tracing import get_recorder
 
 
 class BudgetExceeded(RuntimeError):
@@ -36,13 +36,6 @@ class BudgetExceeded(RuntimeError):
         super().__init__(reason)
         self.reason = reason
         self.snapshot = snapshot or {}
-
-
-def start_run(state: Any) -> str:
-    """记录任务开始时间（只在第一次进入 Workflow 时写）。"""
-
-    started = state.get("run_started_at") or utc_now()
-    return started
 
 
 def _elapsed_seconds(started_at: str) -> float:

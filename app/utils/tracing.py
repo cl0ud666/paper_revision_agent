@@ -15,11 +15,10 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from app.config import get_settings
 
@@ -196,39 +195,3 @@ def reset_recorders(run_id: str | None = None) -> None:
             _RECORDERS.clear()
         else:
             _RECORDERS.pop(run_id or "adhoc", None)
-
-
-def record_step(
-    run_id: str,
-    agent: str,
-    action: str,
-    *,
-    iteration: int = 0,
-    duration_ms: float = 0.0,
-    ok: bool = True,
-    error: str = "",
-    extra: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """记录一条非 LLM 的流程事件（例如 Workflow 进入某个节点）。"""
-
-    key = run_id or "adhoc"
-    record = TraceRecord(
-        run_id=key,
-        agent=agent,
-        action=action,
-        iteration=iteration,
-        started_at=utc_now(),
-        duration_ms=duration_ms,
-        ok=ok,
-        error=error,
-        extra=extra or {},
-    )
-    get_recorder(key).record(record)
-    return record.to_state()
-
-
-def stopwatch() -> tuple[float, Callable[[], float]]:
-    """返回 (起点, 计算已过去毫秒数的函数)。"""
-
-    start = time.perf_counter()
-    return start, lambda: (time.perf_counter() - start) * 1000.0

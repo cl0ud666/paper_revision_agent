@@ -142,19 +142,6 @@ def find_inconsistencies(
     return issues
 
 
-def describe_inconsistencies(items: Iterable[dict[str, Any]]) -> str:
-    """转成给 Prompt / 报告看的文字。"""
-
-    lines: list[str] = []
-    for item in items:
-        spans = "、".join(item.get("spans") or []) or "（全文）"
-        lines.append(
-            f"- 「{item['old']}」已在别处改为「{item['new']}」，"
-            f"但 {spans} 仍写着「{item['old']}」（全文共 {item['count']} 处）"
-        )
-    return "\n".join(lines)
-
-
 # ---------------------------------------------------------------- 专有名词写法
 
 # 只认"含字母的拉丁词"（模型名 / 数据集名 / 人名 / 缩写都在这一类）
@@ -304,12 +291,6 @@ def find_structure_damage(spans: Iterable[Any]) -> list[dict[str, Any]]:
                 }
             )
     return items
-
-
-def describe_structure_damage(items: Iterable[dict[str, Any]]) -> str:
-    """转成报告 / Prompt 用的文字。"""
-
-    return "\n".join(f"- {item['label']}：{item['reason']}（{item['text']}）" for item in items)
 
 
 # ---------------------------------------------------------------- 专有名词清单

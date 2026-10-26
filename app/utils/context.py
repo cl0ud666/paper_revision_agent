@@ -734,10 +734,3 @@ def format_context(fields: dict[str, str]) -> str:
         label = FIELD_LABELS.get(name, name)
         blocks.append(f"## {label}\n{value}")
     return "\n\n".join(blocks)
-
-
-def context_report(fields: dict[str, str]) -> dict[str, Any]:
-    """Context 使用情况（便于观测与调试）。"""
-
-    sizes = {name: estimate_tokens(value) for name, value in fields.items()}
-    return {"fields": sizes, "total_tokens": sum(sizes.values())}

@@ -27,8 +27,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from app.agents.revision import all_applied_edits, all_failed_edits
 from app.config import get_settings
+from app.document.history import all_applied_edits, all_failed_edits
 from app.utils.tracing import utc_now
 from app.workflow.harness import Harness, new_run_id
 from app.workflow.interaction import prepare_response

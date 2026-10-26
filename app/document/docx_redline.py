@@ -970,15 +970,8 @@ def export_redline(
     for item in structured:
         try:
             block = block_for(source, item)
-            p = item.get("params") or {}
-            bibliography = (
-                block_for(source, {"span_label": p["bibliography_span_label"]})
-                if p.get("bibliography_span_label")
-                else None
-            )
             structure_anchors[item["patch_id"]] = (
                 block,
-                bibliography,
                 source.etree.tostring(block.element),
             )
         except ValueError as exc:
@@ -1078,7 +1071,7 @@ def export_redline(
         anchor = structure_anchors.get(item["patch_id"])
         if anchor is None:
             continue
-        block, bibliography, original_xml = anchor
+        block, original_xml = anchor
         failure_anchors[item["patch_id"]] = (
             block.element.find(f".//{w('p')}") if block.kind == "table" else block.element
         )
@@ -1088,7 +1081,7 @@ def export_redline(
                 and source.etree.tostring(block.element) != original_xml
             ):
                 raise ValueError("该表格已被另一条补丁修改，原始行列坐标可能失效，未覆盖其它修改")
-            apply_operation(writer, item, block, bibliography=bibliography)
+            apply_operation(writer, item, block)
             outcome.applied.append(dict(item))
         except Exception as exc:
             outcome.skipped.append({**item, "reason": f"写回失败：{exc}"})

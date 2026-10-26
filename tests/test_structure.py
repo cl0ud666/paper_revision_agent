@@ -107,12 +107,12 @@ class TestZoneClassification(unittest.TestCase):
         auditable = select_auditable(self.spans)
         text = " ".join(span.text for span in auditable)
 
-        self.assertNotIn("22270606", text)      # 学号
-        self.assertNotIn("许艳萍", text)        # 指导教师
+        self.assertNotIn("22270606", text)  # 学号
+        self.assertNotIn("许艳萍", text)  # 指导教师
         self.assertNotIn("诚 信 承 诺", text)
         self.assertNotIn("承诺人（签名）", text)
-        self.assertNotIn("感谢导师", text)      # 致谢
-        self.assertNotIn("[1] Kipf", text)      # 参考文献（默认不审）
+        self.assertNotIn("感谢导师", text)  # 致谢
+        self.assertNotIn("[1] Kipf", text)  # 参考文献（默认不审）
 
     def test_body_and_abstract_are_audited(self) -> None:
         auditable = select_auditable(self.spans)

@@ -24,10 +24,10 @@ from app.utils.consistency import (
     describe_entity_check,
     describe_naming_variants,
     find_cross_section_gaps,
+    find_inconsistencies,
     find_naming_variants,
     find_near_miss_names,
     find_structure_damage,
-    find_inconsistencies,
     term_mappings_from_patches,
     term_mappings_from_rules,
 )
@@ -55,7 +55,12 @@ DOC = """# 论文标题
 class TestTermMappings(unittest.TestCase):
     def test_mappings_from_user_rules(self) -> None:
         rules = [
-            {"id": "R1", "kind": "rule", "text": "全文统一把「土豆」写成「马铃薯」", "status": "active"},
+            {
+                "id": "R1",
+                "kind": "rule",
+                "text": "全文统一把「土豆」写成「马铃薯」",
+                "status": "active",
+            },
             {"id": "R2", "kind": "ignore", "text": "不改 P05", "status": "active"},
         ]
         mappings = term_mappings_from_rules(rules)
@@ -86,7 +91,7 @@ class TestTermMappings(unittest.TestCase):
         )
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["count"], 3)
-        self.assertEqual(len(items[0]["spans"]), 2)   # 摘要 + 引言（方法那段已经用马铃薯）
+        self.assertEqual(len(items[0]["spans"]), 2)  # 摘要 + 引言（方法那段已经用马铃薯）
 
     def test_fixed_spans_are_excluded(self) -> None:
         spans = build_spans(DOC)

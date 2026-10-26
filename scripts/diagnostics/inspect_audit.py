@@ -1,20 +1,22 @@
 """
 只读排查脚本：看清"论文被读成了什么"，以及 Audit 报的问题是真问题还是噪声。
 
-用法：python tests/_inspect_audit.py <run_id>
+用法：python -m scripts.diagnostics.inspect_audit <run_id>
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
-import sys
 from collections import Counter
 from pathlib import Path
 
 
 def main() -> int:
-    run_id = sys.argv[1] if len(sys.argv) > 1 else "run-20260924-174814-aa136c"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("run_id")
+    run_id = parser.parse_args().run_id
     run_dir = Path("data/runs") / run_id
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
     document = (run_dir / "original_document.md").read_text(encoding="utf-8")
@@ -33,7 +35,9 @@ def main() -> int:
         print(f"    {span.get('label')} [{span.get('kind')}] {span.get('preview')}")
 
     toc = [span for span in spans if re.search(r"\.{4,}\s*\d+\s*$", span.get("preview") or "")]
-    numbers = [span for span in spans if re.fullmatch(r"\s*[-–—]?\s*\d{1,3}\s*", span.get("preview") or "")]
+    numbers = [
+        span for span in spans if re.fullmatch(r"\s*[-–—]?\s*\d{1,3}\s*", span.get("preview") or "")
+    ]
     print(f"\n--- 目录行（带点线+页码）：{len(toc)} 个；纯页码行：{len(numbers)} 个 ---")
     for span in toc[:6]:
         print(f"    {span.get('label')} {span.get('preview')[:60]}")

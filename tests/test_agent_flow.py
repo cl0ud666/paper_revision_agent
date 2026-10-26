@@ -418,7 +418,12 @@ class TestPatchGate(AgentFlowTestCase):
             "current_document": DOC.replace(ABSTRACT_SENTENCE, ABSTRACT_IMPROVED),
             "audit_findings": [
                 {"id": 1, "span_label": "P01", "problem": "结论笼统", "category": "语言表达"},
-                {"id": 2, "span_label": "P02", "problem": "引言表述不够学术", "category": "学术规范"},
+                {
+                    "id": 2,
+                    "span_label": "P02",
+                    "problem": "引言表述不够学术",
+                    "category": "学术规范",
+                },
             ],
             "proposed_patches": [],
             "applied_patches": [

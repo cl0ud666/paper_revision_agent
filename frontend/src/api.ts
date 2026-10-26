@@ -48,7 +48,6 @@ export type Patch = {
   status?: string
   conflict_reason?: string
   action?: string
-  params?: { source_verification?: { verification?: string; source_url?: string } }
   review_note?: string
 }
 export type HumanRequest = {

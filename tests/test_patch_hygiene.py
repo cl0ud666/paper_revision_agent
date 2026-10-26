@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import unittest
 
-from app.agents import revision as revision_agent
+from app.agents.revision import patches as revision_agent
 from app.document.patches import (
     CONFLICT_TEXT,
-    Patch,
     STATUS_APPLIED,
     STATUS_CONFLICT,
+    Patch,
     validate_patch,
 )
 from app.document.spans import build_spans
@@ -45,9 +45,7 @@ class TestDropNoopPatches(unittest.TestCase):
             replace="这句话改好了",
         )
         notes: list[str] = []
-        kept = revision_agent._drop_noop_patches(
-            [noop_patch(), real], notes, lambda message: None
-        )
+        kept = revision_agent._drop_noop_patches([noop_patch(), real], notes, lambda message: None)
 
         self.assertEqual([patch.patch_id for patch in kept], ["patch-002"])
         self.assertEqual(len(notes), 1)
@@ -65,9 +63,7 @@ class TestDropNoopPatches(unittest.TestCase):
                 conflict_code=reason,
                 conflict_reason=CONFLICT_TEXT[reason],
             )
-            kept = revision_agent._drop_noop_patches(
-                [patch], [], lambda message: None
-            )
+            kept = revision_agent._drop_noop_patches([patch], [], lambda message: None)
             self.assertEqual(len(kept), 1, f"{reason} 不该被丢掉")
 
     def test_nothing_dropped_means_no_note(self) -> None:
@@ -105,9 +101,7 @@ class TestConflictLabels(unittest.TestCase):
             self.assertEqual(patch.status_label, label, f"{code} 的标签不对")
 
     def test_unknown_reason_falls_back(self) -> None:
-        patch = Patch(
-            patch_id="patch-001", span_id="p1234abcd", status=STATUS_CONFLICT
-        )
+        patch = Patch(patch_id="patch-001", span_id="p1234abcd", status=STATUS_CONFLICT)
         self.assertEqual(patch.status_label, "无法定位")
 
     def test_normal_status_is_untouched(self) -> None:

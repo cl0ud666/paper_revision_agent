@@ -66,7 +66,7 @@ app/
 frontend/src/
   pages/        任务列表、任务详情和账号管理
   components/   上传、人工确认及通用状态组件
-  VisualReview.tsx  分页审阅工作区
+  features/review/  分页审阅、布局联动和人工修改事项
 migrations/     业务数据库迁移
 tests/          离线 Python 回归测试
 frontend/e2e/   浏览器交互测试
@@ -85,8 +85,8 @@ Python 测试使用假模型，不需要真实 API Key。PostgreSQL、LibreOffic
 
 ```bash
 python -m pytest -q
-ruff check app main.py scripts/check_repository.py scripts/package_agent_update.py
-ruff format --check app main.py scripts/check_repository.py scripts/package_agent_update.py
+ruff check .
+ruff format --check .
 python scripts/check_repository.py --history
 
 cd frontend

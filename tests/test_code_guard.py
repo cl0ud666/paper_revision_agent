@@ -15,8 +15,8 @@ import unittest
 from pathlib import Path
 
 from app.agents import audit as audit_agent
-from app.agents import revision as revision_agent
 from app.agents.prompts import AUDIT_HEADER
+from app.agents.revision import patches as revision_agent
 from app.config import reset_settings
 from app.utils.llm import reset_llm_factory, set_llm_factory
 from app.utils.resilience import reset_guards
@@ -24,11 +24,7 @@ from app.utils.text import looks_like_code
 from app.utils.tracing import reset_recorders
 from tests.fakes import audit_response, fake_factory
 
-CODE_BLOCK = (
-    "def _dequeue_and_enqueue(self, keys):\n"
-    "    batch_size = keys.shape[0]\n"
-    "    ptr = 0"
-)
+CODE_BLOCK = "def _dequeue_and_enqueue(self, keys):\n    batch_size = keys.shape[0]\n    ptr = 0"
 ASSIGNMENT_BLOCK = (
     "query_data, query_labels = fs_dataset.load_query_set(FEWSHOT_QUERY_DIR)\n"
     "known_count = len(query_data)"
@@ -120,34 +116,69 @@ class TestAuditSkipsCode(CodeSkippingTestCase):
 
 
 class TestRevisionSkipsCode(CodeSkippingTestCase):
+    def test_protected_patch_without_anchor_is_skipped(self) -> None:
+        from app.document.patches import Patch
+
+        patch = Patch(
+            "patch-lost", "missing", quote="CONST", replace="const", conflict_code="code_protected"
+        )
+        notes = []
+        self.assertEqual(
+            revision_agent._drop_code_patches([patch], [], notes, lambda message: None), []
+        )
+        self.assertEqual(len(notes), 1)
+        self.assertIn("未定位", notes[0])
+
     def test_real_assignment_block_is_not_rewritten_under_r7(self) -> None:
         from app.document.spans import build_spans
+
         spans = build_spans("# 实现\n\n" + ASSIGNMENT_BLOCK, version=1)
         code_span = next(span for span in spans if "FEWSHOT_QUERY_DIR" in span.text)
         self.assertTrue(looks_like_code(code_span.text))
-        patches = revision_agent._unification_patches(spans, [{
-            "id": "R7", "kind": "rule", "status": "active",
-            "text": "全文统一为 fewshot_query_dir",
-        }])
+        patches = revision_agent._unification_patches(
+            spans,
+            [
+                {
+                    "id": "R7",
+                    "kind": "rule",
+                    "status": "active",
+                    "text": "全文统一为 fewshot_query_dir",
+                }
+            ],
+        )
         self.assertEqual(patches, [])
 
     def test_identifier_in_prose_cannot_be_changed(self) -> None:
-        from app.document.patches import Patch, STATUS_ACCEPTED, apply_patches, validate_patch
+        from app.document.patches import STATUS_ACCEPTED, Patch, apply_patches, validate_patch
         from app.document.spans import build_spans
+
         document = "变量 FEWSHOT_QUERY_DIR 用于查询。"
         span = build_spans(document, version=1)[0]
         self.assertFalse(looks_like_code(span.text))
-        patch = Patch("patch-001", span.id, span_label=span.label,
-                      quote="FEWSHOT_QUERY_DIR", replace="fewshot_query_dir")
+        patch = Patch(
+            "patch-001",
+            span.id,
+            span_label=span.label,
+            quote="FEWSHOT_QUERY_DIR",
+            replace="fewshot_query_dir",
+        )
         self.assertEqual(validate_patch(patch, [span]).conflict_code, "code_protected")
         notes = []
-        self.assertEqual(revision_agent._drop_code_patches(
-            [patch], [span], notes, lambda message: None), [])
+        self.assertEqual(
+            revision_agent._drop_code_patches([patch], [span], notes, lambda message: None), []
+        )
         self.assertEqual(len(notes), 1)
         # 旧 Checkpoint 里已经接受的补丁也要在真正改文档前再拦一次。
-        stale = Patch("patch-002", span.id, span_label=span.label,
-                      quote="FEWSHOT_QUERY_DIR", replace="fewshot_query_dir",
-                      status=STATUS_ACCEPTED, start_in_span=3, end_in_span=20)
+        stale = Patch(
+            "patch-002",
+            span.id,
+            span_label=span.label,
+            quote="FEWSHOT_QUERY_DIR",
+            replace="fewshot_query_dir",
+            status=STATUS_ACCEPTED,
+            start_in_span=3,
+            end_in_span=20,
+        )
         outcome = apply_patches(document, [span], [stale])
         self.assertEqual(outcome.document, document)
         self.assertEqual(stale.conflict_code, "code_protected")
@@ -159,9 +190,7 @@ class TestRevisionSkipsCode(CodeSkippingTestCase):
 
         spans = build_spans(DOC, version=1)
         code_span = next(s for s in spans if looks_like_code(s.text))
-        prose_span = next(
-            s for s in spans if "本模块实现了" in s.text
-        )
+        prose_span = next(s for s in spans if "本模块实现了" in s.text)
 
         patches = [
             Patch(
@@ -180,9 +209,7 @@ class TestRevisionSkipsCode(CodeSkippingTestCase):
             ),
         ]
         notes: list[str] = []
-        kept = revision_agent._drop_code_patches(
-            patches, spans, notes, lambda message: None
-        )
+        kept = revision_agent._drop_code_patches(patches, spans, notes, lambda message: None)
 
         self.assertEqual([patch.patch_id for patch in kept], ["patch-002"])
         self.assertEqual(len(notes), 1)

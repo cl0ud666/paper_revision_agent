@@ -12,8 +12,8 @@ import unittest
 from pathlib import Path
 
 from app.agents.report import build_report, load_state_snapshot, write_outputs
-from app.agents.revision import all_applied_edits, all_failed_edits
 from app.config import reset_settings
+from app.document.history import all_applied_edits, all_failed_edits
 from app.utils.tracing import reset_recorders
 
 
@@ -100,9 +100,7 @@ def sample_state() -> dict:
         "revision_edits": [
             {"issue_id": 1, "original": "第二轮旧文", "revised": "第二轮新文", "strategy": "exact"}
         ],
-        "revision_failed_edits": [
-            {"issue_id": 2, "reason": "not_found", "find": "找不到的句子"}
-        ],
+        "revision_failed_edits": [{"issue_id": 2, "reason": "not_found", "find": "找不到的句子"}],
         "revision_history": [
             {
                 "iteration": 1,
@@ -132,9 +130,7 @@ def sample_state() -> dict:
                         "strategy": "exact",
                     }
                 ],
-                "failed_edits": [
-                    {"issue_id": 2, "reason": "not_found", "find": "找不到的句子"}
-                ],
+                "failed_edits": [{"issue_id": 2, "reason": "not_found", "find": "找不到的句子"}],
             },
         ],
         "review_result": {
@@ -198,8 +194,22 @@ class TestReport(unittest.TestCase):
         state = sample_state()
         trace_summary = {
             "run_id": "report-test",
-            "per_agent": {"audit": {"calls": 1, "failures": 0, "retries": 0, "total_ms": 10.0, "total_tokens": 100}},
-            "totals": {"calls": 1, "failures": 0, "retries": 0, "total_ms": 10.0, "total_tokens": 100},
+            "per_agent": {
+                "audit": {
+                    "calls": 1,
+                    "failures": 0,
+                    "retries": 0,
+                    "total_ms": 10.0,
+                    "total_tokens": 100,
+                }
+            },
+            "totals": {
+                "calls": 1,
+                "failures": 0,
+                "retries": 0,
+                "total_ms": 10.0,
+                "total_tokens": 100,
+            },
         }
         update = write_outputs(state, trace_summary=trace_summary, logger=lambda message: None)
 

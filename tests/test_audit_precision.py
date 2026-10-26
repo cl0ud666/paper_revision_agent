@@ -18,8 +18,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app.agents import audit as audit_agent
-from app.agents import revision as revision_agent
+from app.agents import audit as audit_agent, revision as revision_agent
 from app.agents.prompts import AUDIT_HEADER, NAME_CHECK_HEADER, REVISION_HEADER
 from app.config import reset_settings
 from app.utils.llm import reset_llm_factory, set_llm_factory
@@ -65,7 +64,12 @@ class AuditPrecisionTestCase(unittest.TestCase):
 
     def tearDown(self) -> None:
         reset_llm_factory()
-        for key in ("PRA_DATA_DIR", "PRA_RUNS_DIR", "PRA_RETRY_MAX_ATTEMPTS", "PRA_AUDIT_MIN_SEVERITY"):
+        for key in (
+            "PRA_DATA_DIR",
+            "PRA_RUNS_DIR",
+            "PRA_RETRY_MAX_ATTEMPTS",
+            "PRA_AUDIT_MIN_SEVERITY",
+        ):
             os.environ.pop(key, None)
         reset_settings()
         reset_guards()
@@ -232,10 +236,13 @@ class TestNameCheck(AuditPrecisionTestCase):
 
     def test_gnn_knn_cnn_rnn_are_not_frequency_errors_in_audit_or_review(self):
         from app.agents.review import _precheck
-        document = ("图神经网络 GNN 通过邻居节点的消息传递学习图表示。\n\n"
-                    "本实验的分类基线为 KNN，KNN 按近邻投票分类，另与 KNN 的结果比较。\n\n"
-                    "CNN 通过卷积提取局部特征，CNN 可以提取序列特征。\n\n"
-                    "RNN 是循环神经网络，本实验也比较了 RNN 的性能。\n")
+
+        document = (
+            "图神经网络 GNN 通过邻居节点的消息传递学习图表示。\n\n"
+            "本实验的分类基线为 KNN，KNN 按近邻投票分类，另与 KNN 的结果比较。\n\n"
+            "CNN 通过卷积提取局部特征，CNN 可以提取序列特征。\n\n"
+            "RNN 是循环神经网络，本实验也比较了 RNN 的性能。\n"
+        )
         update, _ = self.run_audit_with([], document=document)
         self.assertEqual(update["audit_findings"], [])
         _, remaining, _ = _precheck({}, document=document, original=document, targets=[])
@@ -243,20 +250,38 @@ class TestNameCheck(AuditPrecisionTestCase):
 
     def test_frequency_reason_is_rejected_even_with_high_confidence(self):
         document = "图神经网络 GNN 通过消息传递学习节点表示。\n\nKNN 按近邻投票分类，KNN 是基线。\n"
-        update, _ = self.run_audit_with([{
-            "name": "GNN", "correct": "KNN", "span_label": "P01", "confidence": "high",
-            "evidence": "图神经网络 GNN 通过消息传递学习节点表示。",
-            "context_basis": "通过消息传递学习节点表示", "reason": "文中多处写作 KNN，只差一个字符，疑似笔误",
-        }], document=document)
+        update, _ = self.run_audit_with(
+            [
+                {
+                    "name": "GNN",
+                    "correct": "KNN",
+                    "span_label": "P01",
+                    "confidence": "high",
+                    "evidence": "图神经网络 GNN 通过消息传递学习节点表示。",
+                    "context_basis": "通过消息传递学习节点表示",
+                    "reason": "文中多处写作 KNN，只差一个字符，疑似笔误",
+                }
+            ],
+            document=document,
+        )
         self.assertEqual(update["audit_findings"], [])
 
     def test_contextual_error_only_targets_the_wrong_occurrence(self):
         document = "图神经网络 GNN 用消息传递学习节点表示。\n\n本文将 k 近邻分类器记为 GNN，按照最近邻的类别投票。\n"
-        update, _ = self.run_audit_with([{
-            "name": "GNN", "correct": "KNN", "span_label": "P02", "confidence": "high",
-            "evidence": "本文将 k 近邻分类器记为 GNN，按照最近邻的类别投票。",
-            "context_basis": "按照最近邻的类别投票", "reason": "本段明确定义为 k 近邻分类器，对应 KNN；GNN 指图神经网络，与此定义矛盾",
-        }], document=document)
+        update, _ = self.run_audit_with(
+            [
+                {
+                    "name": "GNN",
+                    "correct": "KNN",
+                    "span_label": "P02",
+                    "confidence": "high",
+                    "evidence": "本文将 k 近邻分类器记为 GNN，按照最近邻的类别投票。",
+                    "context_basis": "按照最近邻的类别投票",
+                    "reason": "本段明确定义为 k 近邻分类器，对应 KNN；GNN 指图神经网络，与此定义矛盾",
+                }
+            ],
+            document=document,
+        )
         findings = update["audit_findings"]
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["span_label"], "P02")
@@ -265,10 +290,19 @@ class TestNameCheck(AuditPrecisionTestCase):
     def test_missing_or_invented_context_evidence_is_rejected(self):
         for evidence in ("", "阿里云 ESC 不存在于本段的句子"):
             with self.subTest(evidence=evidence):
-                update, _ = self.run_audit_with([{
-                    "name": "ESC", "correct": "ECS", "confidence": "high", "span_label": "P02",
-                    "evidence": evidence, "context_basis": "阿里云 ESC", "reason": "该段使用阿里云弹性计算服务",
-                }])
+                update, _ = self.run_audit_with(
+                    [
+                        {
+                            "name": "ESC",
+                            "correct": "ECS",
+                            "confidence": "high",
+                            "span_label": "P02",
+                            "evidence": evidence,
+                            "context_basis": "阿里云 ESC",
+                            "reason": "该段使用阿里云弹性计算服务",
+                        }
+                    ]
+                )
                 self.assertEqual(update["audit_findings"], [])
 
     def test_flag_can_turn_the_check_off(self) -> None:
@@ -406,10 +440,10 @@ class TestAuditScope(AuditPrecisionTestCase):
 
         self.assertTrue(prompts)
         joined = "\n".join(prompts)
-        self.assertNotIn("某论文题目", joined)   # 封面
+        self.assertNotIn("某论文题目", joined)  # 封面
         self.assertNotIn("........................", joined)  # 目录条目
-        self.assertIn(ABSTRACT, joined)          # 摘要要审
-        self.assertIn(INTRO, joined)             # 正文要审
+        self.assertIn(ABSTRACT, joined)  # 摘要要审
+        self.assertIn(INTRO, joined)  # 正文要审
         self.assertEqual(update["audit_meta"]["scope"], "body")
         self.assertGreater(update["audit_meta"]["skipped_noise"], 0)
 
@@ -438,7 +472,8 @@ class TestCrossBatchVisibility(AuditPrecisionTestCase):
 
         # 造一份足够长的文档：预算压到很小时才会分成多批
         paragraphs = [
-            f"## {index} 第{index}节\n\n这是第 {index} 节的正文内容，用于把文档撑长以便分批处理。" * 3
+            f"## {index} 第{index}节\n\n这是第 {index} 节的正文内容，用于把文档撑长以便分批处理。"
+            * 3
             for index in range(1, 13)
         ]
         long_doc = "# 论文标题\n\n" + "\n\n".join(paragraphs) + "\n"

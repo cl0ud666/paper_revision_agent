@@ -1,13 +1,13 @@
 """
 只跑一次 Audit（真实模型），用来对比精度改进。
 
-用法：python tests/_run_audit_once.py <file-or-run-dir>
+用法：python -m scripts.diagnostics.run_audit_once <file-or-run-dir>
 """
 
 from __future__ import annotations
 
+import argparse
 import json
-import sys
 from pathlib import Path
 
 from app.agents import audit as audit_agent
@@ -25,17 +25,19 @@ def load(target: str) -> tuple[str, str]:
 
 
 def main() -> int:
-    target = sys.argv[1]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("target")
+    target = parser.parse_args().target
     document, name = load(target)
     spans = build_spans(document)
     report = structure_report(spans)
 
     print("=" * 78)
     print(f"输入：{name}")
-    print(f"  字符 {len(document)}｜块 {report['blocks']}｜分区 {json.dumps(report['zones'], ensure_ascii=False)}")
     print(
-        f"  送审 {len(select_auditable(spans))} 块｜跳过噪声 {report['skipped_noise']} 块"
+        f"  字符 {len(document)}｜块 {report['blocks']}｜分区 {json.dumps(report['zones'], ensure_ascii=False)}"
     )
+    print(f"  送审 {len(select_auditable(spans))} 块｜跳过噪声 {report['skipped_noise']} 块")
 
     state = {
         "run_id": "audit-precision-check",
@@ -48,7 +50,7 @@ def main() -> int:
     meta = update.get("audit_meta") or {}
 
     print("\n--- 结果 ---")
-    print(f"  问题数：{len(findings)}（上次这份文档是 30 条）")
+    print(f"  问题数：{len(findings)}")
     print(f"  丢弃无法核对：{meta.get('dropped_unverifiable')}")
     print(f"  丢弃低价值(low)：{meta.get('dropped_low_severity')}")
     print(f"  同类合并：{meta.get('merged_systematic')}")
