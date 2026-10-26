@@ -52,6 +52,7 @@ class WebTestCase(unittest.TestCase):
             "PRA_CHECKPOINT_URL": "", "PRA_PUBLIC_ORIGIN": "http://testserver",
             "PRA_RETRY_MAX_ATTEMPTS": "1", "PRA_PATCH_GATE": "0", "PRA_FINAL_CONFIRM": "1",
             "PRA_DEFAULT_DAILY_RUNS": "5", "PRA_DEFAULT_RUN_TOKENS": "400000",
+            "PRA_FREE_RUNS": "3", "PRA_REGISTRATION_OPEN": "1",
             "PRA_BUDGET_RUN_TOKENS": "0", "PRA_BUDGET_TURN_TOKENS": "0",
         })
         self.environment.start()
@@ -65,10 +66,14 @@ class WebTestCase(unittest.TestCase):
         self.release = patch("app.web.worker.release_llm_slot"); self.release.start()
         self.login()
         install_demo()
+        from tests.test_final_review import fake_pages
+        self.preview = patch("app.document.preview.render_pages", side_effect=fake_pages)
+        self.preview.start()
 
     def tearDown(self):
         self.client.close()
         self.rate.stop(); self.slot.stop(); self.release.stop()
+        self.preview.stop()
         reset_llm_factory(); reset_guards(); reset_recorders(); reset_checkpointers(); reset_engines()
         settings.cache_clear(); store.cache_clear()
         self.environment.stop(); reset_settings()
@@ -98,6 +103,105 @@ class WebTestCase(unittest.TestCase):
 
 
 class TestWebLifecycle(WebTestCase):
+    def test_recent_events_do_not_freeze_after_first_hundred(self):
+        run = self.upload()
+        with transaction() as db:
+            row = db.get(Run, run['id'])
+            for index in range(125):
+                service.event(db, row, 'progress', f'event-{index}')
+        url = f"/api/v1/runs/{run['id']}/events"
+        first = self.client.get(url).json()
+        self.assertEqual(len(first['events']), 100)
+        tail = self.client.get(url, params={'latest': True}).json()
+        self.assertEqual(len(tail['events']), 100)
+        self.assertEqual(tail['events'][-1]['message'], 'event-124')
+        self.assertGreater(tail['cursor'], first['cursor'])
+        next_page = self.client.get(url, params={'cursor': first['cursor']}).json()
+        self.assertEqual(next_page['events'][-1]['message'], 'event-124')
+        self.login('member')
+        self.assertEqual(self.client.get(url, params={'latest': True}).status_code, 404)
+
+    def test_selected_manual_option_survives_restart_and_becomes_comment(self):
+        from app.document.docx_model import DocxSource
+        from app.document.spans import build_spans
+        original = DocxSource(paper_bytes()).text
+        span = next(s for s in build_spans(original) if s.kind == 'paragraph')
+        issue = {'id': 7, 'kind': 'decision', 'span_id': span.id, 'span_label': span.label,
+                 'problem': '对比实验需要作者确认', 'evidence': span.text,
+                 'options': ['删除相关实验描述', '补充 BERT 对比实验，保留描述'], 'suggestion': '请作者选择'}
+        run = self.upload()
+        with patch('app.agents.audit.run', return_value={'audit_findings': [issue], 'issue_counter': 7}):
+            run, _ = self.run_job(run['id'])
+        self.assertEqual(run['pending']['request']['type'], 'issue_review')
+        self.assertEqual(self.answer(run, {'choices': {'7': 1}}).status_code, 202)
+        reset_checkpointers(); reset_recorders()
+        run, _ = self.run_job(run['id'])
+        request = run['pending']['request']
+        self.assertEqual(request['type'], 'final_confirm')
+        self.assertEqual(request['patches'], [])
+        self.assertEqual(len(request['manual_items']), 1)
+        self.assertIn('补充 BERT', request['manual_items'][0]['suggestion'])
+        self.assertNotIn('P01', request['manual_items'][0]['position'])
+        reset_checkpointers(); reset_recorders()
+        self.assertEqual(self.answer(run, {'excluded_ids': []}).status_code, 202)
+        run, _ = self.run_job(run['id'])
+        self.assertEqual(run['status'], 'completed', run)
+        self.assertEqual(len(run['summary']['unfinished']), 1)
+        output = self.client.get(f"/api/v1/runs/{run['id']}/download").content
+        self.assertEqual(DocxSource(output).text, original)
+        with zipfile.ZipFile(io.BytesIO(output)) as archive:
+            note = archive.read('word/comments.xml').decode()
+        self.assertIn('补充 BERT 对比实验，保留描述', note)
+        self.assertNotIn('删除相关实验描述', note)
+
+    def test_old_result_and_report_do_not_show_unreviewed_gnn(self):
+        run = self.upload()
+        with transaction() as db:
+            saved = db.get(Run, run["id"])
+            saved.status = "completed"
+            saved.state_summary = {"unfinished": [{"title": "GNN 应为 KNN", "kind": "unresolved"},
+                                                   {"title": "已取消项", "kind": "not_selected", "reason": "用户取消"}]}
+            saved.report_key = f"test-reports/{saved.id}.md"
+            store().put(saved.report_key, "# 报告\n\n## 未完成的修改及原因\nGNN 应为 KNN\n".encode(), "text/markdown")
+        detail = self.client.get(f"/api/v1/runs/{run['id']}").json()
+        self.assertEqual([i["title"] for i in detail["summary"]["unfinished"]], ["已取消项"])
+        report = self.client.get(f"/api/v1/runs/{run['id']}/download?kind=report").text
+        self.assertNotIn("GNN 应为 KNN", report)
+        self.assertIn("已取消项", report)
+
+    def test_visual_gate_is_frozen_private_and_no_model_calls_after_confirm(self):
+        run = self.upload()
+        run, _ = self.run_job(run["id"])
+        issue = run["pending"]["request"]["issues"][0]
+        self.answer(run, {"choices": {str(issue["id"]): 0}})
+        run, _ = self.run_job(run["id"])
+        request = run["pending"]["request"]
+        self.assertTrue(request["visual"])
+        self.assertTrue(request["patches"][0]["rects"])
+        image_url = f"/api/v1/runs/{run['id']}/preview/1?fingerprint={request['preview']['fingerprint']}"
+        self.assertEqual(self.client.get(image_url).status_code, 200)
+        self.assertEqual(self.client.get(image_url.replace('/preview/1?', '/preview/2?')).status_code, 404)
+        self.assertEqual(self.client.get(image_url + 'invalid').status_code, 404)
+        self.login("member")
+        self.assertEqual(self.client.get(image_url).status_code, 404)
+        self.login()
+        reset_checkpointers(); reset_recorders()
+        again = self.client.get(f"/api/v1/runs/{run['id']}").json()
+        self.assertEqual(again["pending"]["request"], request)
+        self.assertEqual(self.answer(run, {"excluded_ids": ["unknown"]}).status_code, 400)
+        self.assertEqual(self.answer(run, {"exclude_all": True}).status_code, 202)
+        with patch("app.agents.audit.run", side_effect=AssertionError("no audit after final")), \
+             patch("app.agents.revision.run", side_effect=AssertionError("no revision after final")), \
+             patch("app.agents.review.run", side_effect=AssertionError("no review after final")), \
+             patch("app.document.preview.prepare_visual_review", side_effect=AssertionError("frozen plan")):
+            run, _ = self.run_job(run["id"])
+        self.assertEqual(run["status"], "completed", run)
+        self.assertEqual(run["summary"]["written"], 0)
+        self.assertTrue(any(i["kind"] == "not_selected" for i in run["summary"]["unfinished"]))
+        with transaction() as db:
+            source = store().get(db.get(Run, run["id"]).source_key)
+        self.assertEqual(self.client.get(f"/api/v1/runs/{run['id']}/download").content, source)
+
     def test_legacy_upload_normalizes_once_and_exclude_all_returns_docx(self):
         original = b"{\\rtf1 input paper}"
         normalized = paper_bytes()
@@ -130,7 +234,9 @@ class TestWebLifecycle(WebTestCase):
             run, _ = self.run_job(response.json()["id"])
         self.assertEqual(run["status"], "failed")
         self.assertIn("LibreOffice", run["error"])
-        self.assertEqual(run["used_tokens"], 0)
+        self.assertNotIn("used_tokens", run)
+        with transaction() as db:
+            self.assertEqual(db.get(Run, run["id"]).used_tokens, 0)
 
     def test_upload_choose_resume_confirm_download_and_duplicate_delivery(self):
         run = self.upload()
@@ -150,7 +256,10 @@ class TestWebLifecycle(WebTestCase):
         self.assertEqual(self.answer(run, {"excluded_ids": []}).status_code, 202)
         run, final_job = self.run_job(run["id"])
         self.assertEqual(run["status"], "completed", run)
-        self.assertGreater(run["used_tokens"], 0)
+        self.assertNotIn("used_tokens", run)
+        with transaction() as db:
+            used_tokens = db.get(Run, run["id"]).used_tokens
+            self.assertGreater(used_tokens, 0)
         data = self.client.get(f"/api/v1/runs/{run['id']}/download")
         self.assertEqual(data.status_code, 200)
         with zipfile.ZipFile(io.BytesIO(data.content)) as archive:
@@ -160,7 +269,9 @@ class TestWebLifecycle(WebTestCase):
         self.assertEqual(self.client.get(f"/api/v1/runs/{run['id']}/download?kind=report").status_code, 200)
         execute_job(first_job); execute_job(final_job)
         current = self.client.get(f"/api/v1/runs/{run['id']}").json()
-        self.assertEqual(current["used_tokens"], run["used_tokens"])
+        self.assertNotIn("used_tokens", current)
+        with transaction() as db:
+            self.assertEqual(db.get(Run, run["id"]).used_tokens, used_tokens)
 
     def test_final_exclude_all_still_returns_original_word_and_report(self):
         run = self.upload(); run, _ = self.run_job(run["id"])

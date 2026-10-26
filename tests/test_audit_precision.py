@@ -163,6 +163,9 @@ class TestNameCheck(AuditPrecisionTestCase):
                     "correct": "ECS",
                     "reason": "阿里云的弹性计算服务官方名称是 ECS",
                     "confidence": "high",
+                    "span_label": "P02",
+                    "evidence": "全部实验在阿里云 ESC 上完成，使用 4 张显卡训练了三天。",
+                    "context_basis": "全部实验在阿里云 ESC 上完成",
                 }
             ],
             document=self.TYPO_DOC,  # 文中没有 ECS
@@ -213,8 +216,8 @@ class TestNameCheck(AuditPrecisionTestCase):
         self.assertNotIn(NAME_CHECK_HEADER, [call["header"] for call in calls])
         self.assertEqual(update["audit_findings"], [])
 
-    def test_contrast_inside_the_paper_is_caught_without_the_model(self) -> None:
-        """文中既有 ESC 又有 ECS：确定性比对就够了，不依赖模型判断。"""
+    def test_similar_terms_alone_do_not_create_an_error(self) -> None:
+        """即使存在形近对照，也必须由上下文核验支持，不能靠多数写法判错。"""
 
         document = (
             "## 3 实验\n\n"
@@ -225,9 +228,48 @@ class TestNameCheck(AuditPrecisionTestCase):
         )
         update, _ = self.run_audit_with([], document=document)
         findings = update["audit_findings"]
+        self.assertEqual(findings, [])
+
+    def test_gnn_knn_cnn_rnn_are_not_frequency_errors_in_audit_or_review(self):
+        from app.agents.review import _precheck
+        document = ("图神经网络 GNN 通过邻居节点的消息传递学习图表示。\n\n"
+                    "本实验的分类基线为 KNN，KNN 按近邻投票分类，另与 KNN 的结果比较。\n\n"
+                    "CNN 通过卷积提取局部特征，CNN 可以提取序列特征。\n\n"
+                    "RNN 是循环神经网络，本实验也比较了 RNN 的性能。\n")
+        update, _ = self.run_audit_with([], document=document)
+        self.assertEqual(update["audit_findings"], [])
+        _, remaining, _ = _precheck({}, document=document, original=document, targets=[])
+        self.assertFalse(any("GNN" in i.get("problem", "") for i in remaining))
+
+    def test_frequency_reason_is_rejected_even_with_high_confidence(self):
+        document = "图神经网络 GNN 通过消息传递学习节点表示。\n\nKNN 按近邻投票分类，KNN 是基线。\n"
+        update, _ = self.run_audit_with([{
+            "name": "GNN", "correct": "KNN", "span_label": "P01", "confidence": "high",
+            "evidence": "图神经网络 GNN 通过消息传递学习节点表示。",
+            "context_basis": "通过消息传递学习节点表示", "reason": "文中多处写作 KNN，只差一个字符，疑似笔误",
+        }], document=document)
+        self.assertEqual(update["audit_findings"], [])
+
+    def test_contextual_error_only_targets_the_wrong_occurrence(self):
+        document = "图神经网络 GNN 用消息传递学习节点表示。\n\n本文将 k 近邻分类器记为 GNN，按照最近邻的类别投票。\n"
+        update, _ = self.run_audit_with([{
+            "name": "GNN", "correct": "KNN", "span_label": "P02", "confidence": "high",
+            "evidence": "本文将 k 近邻分类器记为 GNN，按照最近邻的类别投票。",
+            "context_basis": "按照最近邻的类别投票", "reason": "本段明确定义为 k 近邻分类器，对应 KNN；GNN 指图神经网络，与此定义矛盾",
+        }], document=document)
+        findings = update["audit_findings"]
         self.assertEqual(len(findings), 1)
-        self.assertIn("ESC", findings[0]["problem"])
-        self.assertIn("ECS", findings[0]["problem"])
+        self.assertEqual(findings[0]["span_label"], "P02")
+        self.assertIn("仅在 [P02]", findings[0]["suggestion"])
+
+    def test_missing_or_invented_context_evidence_is_rejected(self):
+        for evidence in ("", "阿里云 ESC 不存在于本段的句子"):
+            with self.subTest(evidence=evidence):
+                update, _ = self.run_audit_with([{
+                    "name": "ESC", "correct": "ECS", "confidence": "high", "span_label": "P02",
+                    "evidence": evidence, "context_basis": "阿里云 ESC", "reason": "该段使用阿里云弹性计算服务",
+                }])
+                self.assertEqual(update["audit_findings"], [])
 
     def test_flag_can_turn_the_check_off(self) -> None:
         os.environ["PRA_AUDIT_NAME_CHECK"] = "0"
@@ -386,7 +428,7 @@ class TestCrossBatchVisibility(AuditPrecisionTestCase):
                         {
                             "span_label": "P01",
                             "issue_id": 1,
-                            "quote": ABSTRACT,
+                            "quote": first_quote,
                             "replace": "本文提出一种面向小样本场景的方法。",
                             "rationale": "把结论改具体",
                         }

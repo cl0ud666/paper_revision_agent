@@ -109,6 +109,17 @@ class PaperState(TypedDict, total=False):
     current_document: str
     # 原始 .docx 的路径：改完要写回它（另存副本），所以必须留住"原文件"
     source_docx: str
+    visual_review: bool
+    final_review_ready: bool
+    final_review_confirmed: bool
+    final_patches: list[dict[str, Any]]
+    preview_manifest: dict[str, Any]
+    unfinished_items: list[dict[str, Any]]
+    review_diagnostics: list[dict[str, Any]]
+    deferred_advice: list[dict[str, Any]]
+    selected_decisions: list[dict[str, Any]]
+    manual_items: list[dict[str, Any]]
+    final_manual_items: list[dict[str, Any]]
     input_warnings: list[str]
 
     # ---------- Orchestrator ----------

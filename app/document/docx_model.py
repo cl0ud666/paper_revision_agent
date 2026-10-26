@@ -34,7 +34,7 @@ import zipfile
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterator
 
-from app.utils.text import normalize_document_text, normalize_with_map
+from app.utils.text import normalize_with_map
 
 # 命名空间
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -416,10 +416,16 @@ def _paragraph_block(paragraph: Any, *, index: int, style: str) -> DocxBlock | N
 
     decorated = paragraph_to_markdown(body, style)
     prefix = decorated[: len(decorated) - len(body)] if decorated.endswith(body) else ""
-    kind = "heading" if prefix.startswith("#") else ("list" if prefix.startswith("-") else "paragraph")
+    kind = (
+        "heading" if prefix.startswith("#") else ("list" if prefix.startswith("-") else "paragraph")
+    )
 
     shifted = _shift(pieces, len(prefix))
-    obstacles = [(offset - start + len(prefix), tag) for offset, tag in builder.obstacles if start <= offset <= end]
+    obstacles = [
+        (offset - start + len(prefix), tag)
+        for offset, tag in builder.obstacles
+        if start <= offset <= end
+    ]
     return DocxBlock(
         index=index,
         kind=kind,
@@ -448,6 +454,8 @@ def _table_rows(table: Any) -> list[list[_Cell]]:
 
     rows: list[list[_Cell]] = []
     for row in table.findall(w("tr")):
+        if row.find(f"{w('trPr')}/{w('del')}") is not None:
+            continue
         cells: list[_Cell] = []
         for cell in row.findall(w("tc")):
             builder = _TextBuilder()
@@ -464,9 +472,7 @@ def _table_rows(table: Any) -> list[list[_Cell]]:
             start, end = _trim_bounds(raw)
             pieces = builder.clip(start, end)
             obstacles = [
-                (offset - start, tag)
-                for offset, tag in builder.obstacles
-                if start <= offset <= end
+                (offset - start, tag) for offset, tag in builder.obstacles if start <= offset <= end
             ]
             cells.append(_Cell(text=raw[start:end], pieces=pieces, obstacles=obstacles))
         rows.append(cells)
@@ -613,9 +619,7 @@ class DocxSource:
                 block.obstacles = []
                 broken.append(block.index)
         if broken:
-            self.warnings.append(
-                f"有 {len(broken)} 个块无法与原文对齐，这些块只读不可回写。"
-            )
+            self.warnings.append(f"有 {len(broken)} 个块无法与原文对齐，这些块只读不可回写。")
 
     def _collect_blocks(self) -> list[DocxBlock]:
         body = self.document_root.find(w("body"))
@@ -630,9 +634,7 @@ class DocxSource:
                 block = _paragraph_block(element, index=len(blocks), style=style)
             else:
                 table_counter += 1
-                block = _table_block(
-                    element, index=len(blocks), label=f"T{table_counter:02d}"
-                )
+                block = _table_block(element, index=len(blocks), label=f"T{table_counter:02d}")
             if block is not None and block.text.strip():
                 blocks.append(block)
         return blocks

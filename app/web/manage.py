@@ -1,8 +1,8 @@
 """部署初始化与邀请制账号管理：python -m app.web.manage --help。"""
+
 import argparse
 import getpass
 import os
-from pathlib import Path
 import secrets
 import time
 
@@ -22,11 +22,22 @@ def init_env():
     target = PROJECT_ROOT / "deploy" / ".env"
     postgres, redis, minio, password = (secrets.token_urlsafe(24) for _ in range(4))
     values = {
-        "POSTGRES_PASSWORD": postgres, "REDIS_PASSWORD": redis,
-        "MINIO_ROOT_USER": "paper-admin", "MINIO_ROOT_PASSWORD": minio,
-        "PRA_ADMIN_USERNAME": "admin", "PRA_ADMIN_PASSWORD": password,
-        "PRA_PUBLIC_ORIGIN": "http://localhost:8080", "PRA_COOKIE_SECURE": "0",
-        "PRA_WEB_DEMO": "0", "PRA_DEFAULT_DAILY_RUNS": "5", "PRA_DEFAULT_RUN_TOKENS": "400000",
+        "POSTGRES_PASSWORD": postgres,
+        "REDIS_PASSWORD": redis,
+        "MINIO_ROOT_USER": "paper-admin",
+        "MINIO_ROOT_PASSWORD": minio,
+        "PRA_ADMIN_USERNAME": "admin",
+        "PRA_ADMIN_PASSWORD": password,
+        "PRA_PUBLIC_ORIGIN": "http://localhost:8080",
+        "PRA_COOKIE_SECURE": "0",
+        "PRA_WEB_DEMO": "0",
+        "PRA_DEFAULT_DAILY_RUNS": "5",
+        "PRA_DEFAULT_RUN_TOKENS": "400000",
+        "PRA_FREE_RUNS": "3",
+        "PRA_REGISTRATION_OPEN": "1",
+        "PRA_WORKER_CONCURRENCY": "5",
+        "PRA_LLM_CONCURRENCY": "15",
+        "PRA_AUDIT_CONCURRENCY": "3",
     }
     with target.open("x", encoding="utf-8") as handle:
         for key, value in values.items():
@@ -40,6 +51,7 @@ def bootstrap():
     storage = store()
     if hasattr(storage, "client"):
         from botocore.exceptions import ClientError
+
         for attempt in range(30):
             try:
                 try:
@@ -79,14 +91,20 @@ def main():
     elif args.action == "bootstrap":
         bootstrap()
     else:
-        password = getpass.getpass("新密码（至少 12 位）：")
+        password = getpass.getpass("新密码（至少 6 位）：")
         if password != getpass.getpass("再次输入："):
             raise SystemExit("两次密码不一致")
         if args.action == "reset-password":
             reset_password(args.username, password)
             print("密码已更新，此账号的所有旧会话已撤销。")
         else:
-            add_user(args.username, password, admin=args.admin, daily_runs=args.daily_runs, run_tokens=args.run_tokens)
+            add_user(
+                args.username,
+                password,
+                admin=args.admin,
+                daily_runs=args.daily_runs,
+                run_tokens=args.run_tokens,
+            )
             print("账号已创建。")
 
 

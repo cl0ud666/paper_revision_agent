@@ -23,12 +23,10 @@ from app.agents.prompts import REVIEW_SYSTEM, render_review_prompt
 from app.config import get_settings
 from app.document.spans import build_spans
 from app.utils.budget import BudgetExceeded
-from app.utils.context import build_context, format_context
 from app.utils.consistency import (
-    find_cross_section_gaps,
-    find_near_miss_names,
     find_structure_damage,
 )
+from app.utils.context import build_context, format_context
 from app.utils.json_utils import parse_json_object
 from app.utils.llm import call_llm
 from app.utils.resilience import get_guard
@@ -107,6 +105,45 @@ def run(
 
     result["checks"] = checks
 
+    # A clipped prompt is a limitation of the reviewer, not evidence of a
+    # defective edit. Full-document deterministic checks still run below.
+    def context_only(text):
+        import re
+
+        return bool(
+            re.search(
+                r"(?:摘要|上下文|片段|补丁清单).{0,70}(?:无法|未能|不能).{0,25}(?:确认|判断|核实)|"
+                r"(?:无法|未能|不能).{0,25}(?:从摘要|从片段)|全文.{0,35}需逐处核查",
+                str(text),
+            )
+        )
+
+    original_review_count = len(result.get("remaining_issues") or []) + len(
+        result.get("per_issue") or []
+    )
+    result["remaining_issues"] = [
+        i for i in result.get("remaining_issues") or [] if not context_only(i.get("problem"))
+    ]
+    result["per_issue"] = [
+        i for i in result.get("per_issue") or [] if not context_only(i.get("reason"))
+    ]
+    if original_review_count > len(result["remaining_issues"]) + len(result["per_issue"]):
+        checks.append(
+            {
+                "name": "复核上下文",
+                "status": "info",
+                "detail": "已排除仅因摘要裁剪而产生的未完成判断；全文一致性仍由程序核查",
+            }
+        )
+        if (
+            not result["remaining_issues"]
+            and not any(i.get("status") in {"unresolved", "partially"} for i in result["per_issue"])
+            and not result.get("constraint_violations")
+            and not hard_fail
+            and not forced_remaining
+        ):
+            result["status"] = "pass"
+
     # 用户拒绝 = 主动缩小范围：这些改动不算“未解决的问题”，
     # 否则多轮里会一直被判 fail、一直重复打扰用户。
     profiles = _rejected_profiles(state)
@@ -144,8 +181,7 @@ def run(
         ):
             result["status"] = "pass"
             result["summary"] = (
-                f"{result.get('summary', '')}"
-                "（除用户已拒绝的范围外，本轮提出的要求均已落实。）"
+                f"{result.get('summary', '')}（除用户已拒绝的范围外，本轮提出的要求均已落实。）"
             ).strip()
 
     if forced_remaining:
@@ -254,9 +290,7 @@ def _consistency_issues(state: Any, document: str) -> list[dict[str, Any]]:
 def _rejected_profiles(state: Any) -> list[dict[str, str]]:
     """用户拒绝过的改动对应的“位置 + 问题”，用于排除重复抱怨。"""
 
-    findings = {
-        issue.get("id"): issue for issue in (state.get("audit_findings") or [])
-    }
+    findings = {issue.get("id"): issue for issue in (state.get("audit_findings") or [])}
     profiles: list[dict[str, str]] = []
     for patch in state.get("rejected_patches") or []:
         issue = findings.get(patch.get("issue_id")) or {}
@@ -354,9 +388,7 @@ def _precheck(
 
     # 1) 文档不能为空
     if document.strip():
-        checks.append(
-            {"name": "文档非空", "status": "ok", "detail": f"{len(document)} 字符"}
-        )
+        checks.append({"name": "文档非空", "status": "ok", "detail": f"{len(document)} 字符"})
     else:
         checks.append({"name": "文档非空", "status": "fail", "detail": "修改后文档为空"})
         hard_fail = True
@@ -554,79 +586,8 @@ def _precheck(
     else:
         checks.append({"name": "排版结构", "status": "ok", "detail": "标题与列表标记正常"})
 
-    # 9) 跨章节一致性（确定性全文检查）
-    #    这一类问题模型"时灵时不灵"：摘要与结论常常不在同一批里，
-    #    一次只看一批的 Audit 能不能发现完全看运气。全文扫描没有这个问题。
-    gaps = find_cross_section_gaps(document_spans)
-    near_misses = find_near_miss_names(document_spans)
-    # 疑似笔误的名字常常同时"正文没出现"（那是笔误造成的假象），只报更准确的那条
-    suspected_forms = {str(item.get("suspected") or "") for item in near_misses}
-    gaps = [item for item in gaps if str(item.get("name")) not in suspected_forms]
-    if gaps:
-        checks.append(
-            {
-                "name": "跨章节一致性",
-                "status": "warn",
-                "detail": f"{len(gaps)} 个专有名词只在摘要/结论出现，正文没有",
-            }
-        )
-        for position, item in enumerate(gaps[:3], start=1):
-            where = "、".join(item.get("labels") or []) or "摘要/结论"
-            forced_remaining.append(
-                {
-                    "id": -200 - position,
-                    "category": "专有名词",
-                    "severity": "medium",
-                    "location": where,
-                    "span_label": (item.get("labels") or [""])[0],
-                    "problem": (
-                        f"「{item['name']}」只出现在摘要/结论（{where}），"
-                        "正文的方法或实验部分从未出现：可能正文缺了对应的实验说明，"
-                        "也可能总结里写了正文没做过的东西"
-                    ),
-                    "suggestion": (
-                        f"两条路选一条：在正文补上「{item['name']}」对应的方法/实验说明，"
-                        f"或从摘要/结论里删掉它。若确属笔误或另一种写法，请改成全文统一的写法"
-                    ),
-                    "source": "precheck",
-                }
-            )
-    else:
-        checks.append(
-            {"name": "跨章节一致性", "status": "ok", "detail": "摘要/结论提到的方法都在正文出现过"}
-        )
-
-    if near_misses:
-        checks.append(
-            {
-                "name": "专有名词拼写",
-                "status": "warn",
-                "detail": f"{len(near_misses)} 处疑似拼写错误",
-            }
-        )
-        for position, item in enumerate(near_misses[:3], start=1):
-            where = "、".join(item.get("suspected_labels") or []) or "全文"
-            forced_remaining.append(
-                {
-                    "id": -300 - position,
-                    "category": "专有名词",
-                    "severity": "medium",
-                    "location": where,
-                    "span_label": (item.get("suspected_labels") or [""])[0],
-                    "problem": (
-                        f"「{item['suspected']}」（{where}，只出现 "
-                        f"{item.get('suspected_count')} 次）与「{item['likely']}」"
-                        f"（出现 {item.get('likely_count')} 次）只差一个字符，疑似拼写错误"
-                    ),
-                    "suggestion": (
-                        f"核对「{item['suspected']}」是不是「{item['likely']}」的笔误；"
-                        "若是，统一改成正确写法"
-                    ),
-                    "source": "precheck",
-                }
-            )
-    else:
-        checks.append({"name": "专有名词拼写", "status": "ok", "detail": "未发现近似拼写"})
+    # 术语的频次、形近和章节分布都不能确定语义错误。
+    # 具体位置的术语正确性由带上下文的语义复核判断，不能生成 forced_remaining。
 
     # 7) 约束存在性（信息性检查）
     constraints = state.get("human_constraints") or []
@@ -726,6 +687,7 @@ def _normalize_review(data: dict[str, Any]) -> dict[str, Any]:
                 "location": issue.get("location", ""),
                 "problem": issue.get("problem", ""),
                 "suggestion": issue.get("suggestion", ""),
+                "evidence": issue.get("evidence", ""),
                 "source": "review",
             }
         )
@@ -754,9 +716,7 @@ def _normalize_review(data: dict[str, Any]) -> dict[str, Any]:
                 continue
 
     violations = [
-        str(item).strip()
-        for item in (data.get("constraint_violations") or [])
-        if str(item).strip()
+        str(item).strip() for item in (data.get("constraint_violations") or []) if str(item).strip()
     ]
 
     try:

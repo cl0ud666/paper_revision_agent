@@ -43,12 +43,18 @@ def write_redline_docx(
 
     source = str(state.get("source_docx") or "")
     rounds = applied_rounds(state)
-    # 建议类：原文没写错（或涉及代码），不生成补丁，只在原地留一条批注。
-    suggestions = [
-        {**issue, "kind": "advice"}
-        for issue in (state.get("audit_findings") or [])
-        if (issue.get("kind") or "fix") == "advice"
-    ]
+    # Suggestions now enter Revision like fixes. Only explicit failed attempts
+    # may become manual comments; do not append raw audit opinions at export.
+    suggestions = list(state.get("manual_items") or [])
+    if state.get("visual_review"):
+        # Frozen records already contain immutable-original anchors.
+        suggestions = list(state.get("final_manual_items") or [])
+    if state.get("visual_review") and source and not any(rounds) and not suggestions:
+        return {
+            "docx_path": source,
+            "current_document": state.get("original_document") or "",
+            "redline_summary": {"applied": 0, "skipped": 0, "comments": 0, "changes": 0},
+        }
     # 没有补丁、也没有建议，才没什么可写的
     if not source or (not rounds and not suggestions):
         return {}
@@ -66,19 +72,131 @@ def write_redline_docx(
             rounds,
             str(target),
             author=settings.output.redline_author,
-            comments=settings.output.redline_comments,
+            comments=True if state.get("visual_review") else settings.output.redline_comments,
             suggestions=suggestions,
         )
     except Exception as exc:  # noqa: BLE001 - 写回失败不该让整个任务失败
         log(f"[Report] 写回 Word 失败（{type(exc).__name__}: {exc}），只输出文字稿。")
+        if state.get("visual_review"):
+            return _manual_export_fallback(
+                state,
+                path,
+                target,
+                suggestions,
+                settings.output.redline_author,
+                f"Word 写回失败：{type(exc).__name__}: {exc}",
+            )
         return {"redline_summary": {"error": f"{type(exc).__name__}: {exc}"}}
 
     summary = outcome.to_json()
+    extra = {}
+    if state.get("visual_review"):
+        from app.document.final_review import deduplicate, visible_unfinished
+
+        expected = state.get("original_document") or ""
+        for item in sorted(outcome.applied, key=lambda p: p["original_start"], reverse=True):
+            if item.get("action", "replace_text") != "replace_text":
+                continue
+            expected = (
+                expected[: item["original_start"]]
+                + item["replace"]
+                + expected[item["original_end"] :]
+            )
+        from app.utils.text import normalize_document_text
+
+        checked_text = (
+            outcome.text_before_structural
+            if outcome.text_before_structural is not None
+            else outcome.text
+        )
+        if checked_text != (normalize_document_text(expected) if expected.strip() else ""):
+            return _manual_export_fallback(
+                state,
+                path,
+                target,
+                suggestions,
+                settings.output.redline_author,
+                "Word 写回结果与确认清单不一致，已撤销本次自动写入",
+            )
+        summary["applied_ids"] = [p["patch_id"] for p in outcome.applied]
+        reviewed_ids = {p["patch_id"] for p in state.get("final_patches") or []}
+        unfinished = visible_unfinished(
+            state.get("unfinished_items"),
+            reviewed_ids,
+            [m["manual_id"] for m in state.get("final_manual_items") or []],
+        )
+        for item in outcome.skipped:
+            if item.get("patch_id") not in reviewed_ids:
+                continue
+            unfinished.append(
+                {
+                    "patch_id": item["patch_id"],
+                    "title": item.get("before") or item.get("quote") or "修改未写入",
+                    "blocked_reason": item.get("reason") or "Word 写回失败",
+                    "suggestion": f"将「{item.get('before') or item.get('quote', '')}」改为「{item.get('replace') or '（删除）'}」",
+                    "reason": item.get("rationale") or "确认的修改未能写入原文件",
+                    "position": item.get("position") or "",
+                    "kind": "blocked",
+                }
+            )
+        extra = {"unfinished_items": deduplicate(unfinished), "current_document": outcome.text}
     log(f"[Report] Word 副本：{target}（{outcome.summary()}）")
     return {
         "docx_path": str(target),
         "redline_summary": summary,
+        **extra,
     }
+
+
+def _manual_export_fallback(state, source, target, suggestions, author, reason):
+    """Restart from the immutable source and deliver comments only on failure."""
+    from app.document.final_review import deduplicate, visible_unfinished
+
+    excluded = set(state.get("excluded_patch_ids") or [])
+    reviewed = state.get("final_patches") or []
+    unfinished = visible_unfinished(
+        state.get("unfinished_items"),
+        [p["patch_id"] for p in reviewed],
+        [m["manual_id"] for m in state.get("final_manual_items") or []],
+    )
+    notes = list(suggestions)
+    for patch in reviewed:
+        if patch["patch_id"] in excluded:
+            continue
+        item = {
+            **patch,
+            "kind": "blocked",
+            "title": patch["before"],
+            "blocked_reason": reason,
+            "reason": patch.get("rationale") or "确认的修改无法写入",
+            "suggestion": f"将「{patch['before']}」改为「{patch['replace'] or '（删除）'}」",
+        }
+        unfinished.append(item)
+        notes.append({**item, "kind": "manual", "original_anchor_start": patch["original_start"]})
+    result = {
+        "unfinished_items": deduplicate(unfinished),
+        "current_document": state.get("original_document") or "",
+        "docx_path": "",
+        "redline_summary": {"error": reason, "applied": 0, "applied_ids": []},
+    }
+    try:
+        fallback = export_redline(
+            source.read_bytes(), [], str(target), author=author, comments=True, suggestions=notes
+        )
+        result.update(
+            docx_path=str(target),
+            current_document=fallback.text,
+            redline_summary={
+                **fallback.to_json(),
+                "fallback_reason": reason,
+                "applied_ids": [],
+                "warnings": [*fallback.warnings, reason],
+                "skipped": len([p for p in reviewed if p["patch_id"] not in excluded]),
+            },
+        )
+    except Exception as exc:
+        result["errors"] = [f"文件及批注均未能写入：{type(exc).__name__}: {exc}"]
+    return result
 
 
 def _cell(value: Any) -> str:
@@ -105,6 +223,12 @@ def build_report(state: Any, *, trace_summary: dict[str, Any] | None = None) -> 
     approved_ids = set(state.get("approved_issue_ids") or [])
     # 汇总所有轮次的修改（revision_edits 只保留最后一轮）
     edits = all_applied_edits(state)
+    if state.get("visual_review") and state.get("final_review_confirmed"):
+        excluded = set(state.get("excluded_patch_ids") or [])
+        edits = [p for p in state.get("final_patches") or [] if p["patch_id"] not in excluded]
+        actual = (state.get("redline_summary") or {}).get("applied_ids")
+        if actual is not None:
+            edits = [p for p in edits if p["patch_id"] in actual]
     failed_edits = all_failed_edits(state)
     history = state.get("revision_history") or []
 
@@ -119,9 +243,7 @@ def build_report(state: Any, *, trace_summary: dict[str, Any] | None = None) -> 
         f"- 执行路径：{state.get('plan_kind') or '-'}"
         f"（当前动作：{state.get('next_action') or '-'}）"
     )
-    lines.append(
-        f"- 迭代轮次：{state.get('iteration', 0)} / {state.get('max_iterations', 3)}"
-    )
+    lines.append(f"- 迭代轮次：{state.get('iteration', 0)} / {state.get('max_iterations', 3)}")
     lines.append(f"- 最终结论：{_final_conclusion(state)}")
     redline = state.get("redline_summary") or {}
     if state.get("docx_path"):
@@ -185,7 +307,9 @@ def build_report(state: Any, *, trace_summary: dict[str, Any] | None = None) -> 
             lines.append(
                 "| {id} | {severity} | {category} | {location} | {problem} | {approved} |".format(
                     id=_cell(issue.get("id")),
-                    severity=_cell(SEVERITY_LABEL.get(issue.get("severity", ""), issue.get("severity"))),
+                    severity=_cell(
+                        SEVERITY_LABEL.get(issue.get("severity", ""), issue.get("severity"))
+                    ),
                     category=_cell(issue.get("category")),
                     location=_cell(issue.get("location")),
                     problem=_cell(issue.get("problem")),
@@ -276,7 +400,9 @@ def build_report(state: Any, *, trace_summary: dict[str, Any] | None = None) -> 
                     n=position,
                     patch=_cell(edit.get("patch_id")),
                     round=_cell(edit.get("round", "")),
-                    span=_cell(edit.get("position") or edit.get("span_label") or edit.get("span_id")),
+                    span=_cell(
+                        edit.get("position") or edit.get("span_label") or edit.get("span_id")
+                    ),
                     before=_cell(edit.get("before") or edit.get("original")),
                     after=_cell(edit.get("replace") or edit.get("revised")),
                     rationale=_cell(edit.get("rationale")),
@@ -358,8 +484,7 @@ def build_report(state: Any, *, trace_summary: dict[str, Any] | None = None) -> 
     scores = review_result.get("dimension_scores") or {}
     if scores:
         lines.append(
-            "- 维度评分（1~5）："
-            + "，".join(f"{key} {value}" for key, value in scores.items())
+            "- 维度评分（1~5）：" + "，".join(f"{key} {value}" for key, value in scores.items())
         )
     lines.append("")
 
@@ -412,11 +537,19 @@ def build_report(state: Any, *, trace_summary: dict[str, Any] | None = None) -> 
     breaks = guard_snapshots()
     if breaks:
         lines.append(
-            "熔断器状态："
-            + "，".join(f"{item['agent']}={item['state']}" for item in breaks)
+            "熔断器状态：" + "，".join(f"{item['agent']}={item['state']}" for item in breaks)
         )
         lines.append("")
 
+    if state.get("visual_review"):
+        from app.document.final_review import unfinished_section, visible_unfinished
+
+        unfinished = visible_unfinished(
+            state.get("unfinished_items"),
+            [p["patch_id"] for p in state.get("final_patches") or []],
+            [m["manual_id"] for m in state.get("final_manual_items") or []],
+        )
+        lines.append(unfinished_section(unfinished))
     errors = list(state.get("input_warnings") or []) + list(state.get("errors") or [])
     if errors:
         lines.append("## 七、异常与降级记录")
@@ -429,6 +562,8 @@ def build_report(state: Any, *, trace_summary: dict[str, Any] | None = None) -> 
 
 
 def _final_conclusion(state: Any) -> str:
+    if state.get("visual_review"):
+        return "按最终勾选结果导出；模型结论不代表修改一定正确，请核对未完成项及原文"
     review_result = state.get("review_result") or {}
     status = str(review_result.get("status") or "").lower()
     iteration = state.get("iteration", 0)
@@ -450,7 +585,10 @@ def _trace_table(trace_summary: dict[str, Any] | None) -> str:
     if not per_agent:
         return "（无 Trace 数据）"
 
-    lines = ["| Agent | 调用次数 | 失败 | 重试 | 总耗时(ms) | Tokens |", "| --- | --- | --- | --- | --- | --- |"]
+    lines = [
+        "| Agent | 调用次数 | 失败 | 重试 | 总耗时(ms) | Tokens |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
     for agent, bucket in per_agent.items():
         lines.append(
             f"| {agent} | {bucket.get('calls', 0)} | {bucket.get('failures', 0)} | "

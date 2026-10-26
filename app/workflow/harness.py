@@ -20,9 +20,8 @@ from langgraph.types import Command
 
 from app.config import get_settings, validate_run_id
 from app.state.schema import initial_state
+from app.utils.rules import apply_payload as rules_payload, parse_instruction, rule_texts
 from app.utils.tracing import get_recorder, reset_recorders, utc_now
-from app.utils.rules import apply_payload as rules_payload
-from app.utils.rules import parse_instruction, rule_texts
 from app.workflow.graph import build_graph
 from app.workflow.interaction import auto_response, prepare_response
 
@@ -154,7 +153,10 @@ class Harness:
 
         self.run_id = validate_run_id(run_id if run_id is not None else new_run_id())
         run_dir = self.settings.paths.run_dir(self.run_id)
-        if any((run_dir / name).exists() for name in ("state.json", "original_document.md", "trace.jsonl", "llm_calls.jsonl")):
+        if any(
+            (run_dir / name).exists()
+            for name in ("state.json", "original_document.md", "trace.jsonl", "llm_calls.jsonl")
+        ):
             raise ValueError("run_id 已有运行产物，请使用新 ID 或恢复原任务")
         run_dir.mkdir(parents=True, exist_ok=True)
         try:
@@ -185,9 +187,7 @@ class Harness:
         rules = list(dict.fromkeys([*self.auto_approve_constraints, *(rules or [])]))
         if rules:
             # 开局就可以给“要求”，例如：全文统一把「土豆」写成「马铃薯」
-            seed_rules, _ = rules_payload(
-                [], {"rules": list(rules)}, turn=1, source="start"
-            )
+            seed_rules, _ = rules_payload([], {"rules": list(rules)}, turn=1, source="start")
             state["user_rules"] = seed_rules
             state["human_constraints"] = rule_texts(seed_rules)
         self.log(f"[Harness] 启动任务 {self.run_id}（thread={self.thread_id}）")
@@ -206,7 +206,11 @@ class Harness:
         snapshot = self.graph.get_state(self._config())
         pending = list(getattr(snapshot, "interrupts", ()) or ())
         if not pending:
-            pending = [item for task in getattr(snapshot, "tasks", ()) for item in getattr(task, "interrupts", ())]
+            pending = [
+                item
+                for task in getattr(snapshot, "tasks", ())
+                for item in getattr(task, "interrupts", ())
+            ]
         return _extract_interrupts({"__interrupt__": pending})[0] if pending else {}
 
     def follow_up(

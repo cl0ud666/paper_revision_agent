@@ -19,9 +19,24 @@ from typing import Any
 from app.state.schema import ROUTE_ACTIONS
 
 
+def _explicit_work(state):
+    from app.document.requests import explicit_targets
+    from app.document.spans import build_spans
+
+    return (
+        not state.get("iteration")
+        and not (state.get("budget") or {}).get("exceeded")
+        and bool(explicit_targets(state, build_spans(state.get("current_document") or "")))
+    )
+
+
 def route_from_orchestrator(state: Any) -> str:
     """根据 Orchestrator 的规划决定下一个 Node。"""
 
+    from app.agents.orchestrator import requires_initial_audit
+
+    if requires_initial_audit(state):
+        return "audit"
     action = str(state.get("next_action") or "").strip()
     if action not in ROUTE_ACTIONS:
         # 状态异常时回到最安全的路径：先审查
@@ -31,7 +46,7 @@ def route_from_orchestrator(state: Any) -> str:
     # Revision 会照它执行。真要再问，请让用户在多轮追问里自己提。
     if action == "human_approval" and state.get("decisions"):
         return "revision"
-    return action
+    return "revision" if action == "report" and _explicit_work(state) else action
 
 
 def route_after_audit(state: Any) -> str:
@@ -49,7 +64,7 @@ def route_after_audit(state: Any) -> str:
     if state.get("audit_failed"):
         return "report"
     if not state.get("audit_findings"):
-        return "report"
+        return "revision" if _explicit_work(state) else "report"
     if _pending_decisions(state):
         return "issue_review"
     return "revision"
@@ -72,7 +87,7 @@ def route_after_issue_review(state: Any) -> str:
 
     findings = state.get("audit_findings") or []
     pending = [issue for issue in findings if not issue.get("ignored")]
-    return "revision" if pending else "report"
+    return "revision" if pending or _explicit_work(state) else "report"
 
 
 def route_after_human(state: Any) -> str:

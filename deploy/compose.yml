@@ -14,7 +14,11 @@ x-environment: &environment
   PRA_COOKIE_SECURE: ${PRA_COOKIE_SECURE:-0}
   PRA_DEFAULT_DAILY_RUNS: ${PRA_DEFAULT_DAILY_RUNS:-5}
   PRA_DEFAULT_RUN_TOKENS: ${PRA_DEFAULT_RUN_TOKENS:-400000}
-  PRA_LLM_CONCURRENCY: "6"
+  PRA_LLM_CONCURRENCY: ${PRA_LLM_CONCURRENCY:-15}
+  PRA_AUDIT_CONCURRENCY: ${PRA_AUDIT_CONCURRENCY:-3}
+  PRA_FREE_RUNS: ${PRA_FREE_RUNS:-3}
+  PRA_REGISTRATION_OPEN: ${PRA_REGISTRATION_OPEN:-1}
+  PRA_TRUST_PROXY_IP: "1"
   PRA_BUDGET_RUN_TOKENS: "0"
   PRA_BUDGET_TURN_TOKENS: "0"
   PRA_BUDGET_RUN_SECONDS: "1800"
@@ -105,7 +109,7 @@ services:
     <<: *backend
     env_file:
       - ../.env
-    command: celery -A app.web.queue:celery_app worker --loglevel=INFO --concurrency=2 --pool=prefork
+    command: celery -A app.web.queue:celery_app worker --loglevel=INFO --concurrency=${PRA_WORKER_CONCURRENCY:-5} --pool=prefork
   dispatcher:
     <<: *backend
     command: python -m app.web.dispatcher

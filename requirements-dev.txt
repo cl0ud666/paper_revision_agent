@@ -1,0 +1,5 @@
+# Developer tools only. Install alongside requirements.txt and requirements-web.txt.
+pytest>=8,<10
+ruff==0.17.2
+python-docx>=1,<2
+lxml>=5,<7

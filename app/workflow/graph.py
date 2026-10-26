@@ -33,6 +33,7 @@ from app.workflow.nodes import (
     issue_review_node,
     orchestrator_node,
     patch_review_node,
+    prepare_report_node,
     report_node,
     review_node,
     revision_node,
@@ -81,11 +82,13 @@ def build_checkpointer(settings: Settings | None = None) -> Any:
                 return cached
             try:
                 from langgraph.checkpoint.postgres import PostgresSaver
+                from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
                 from psycopg.rows import dict_row
                 from psycopg_pool import ConnectionPool
-                from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
             except ImportError as exc:
-                raise RuntimeError("请安装 requirements-web.txt 中的 PostgreSQL Checkpoint 依赖") from exc
+                raise RuntimeError(
+                    "请安装 requirements-web.txt 中的 PostgreSQL Checkpoint 依赖"
+                ) from exc
             pool = None
             try:
                 pool = ConnectionPool(
@@ -101,7 +104,9 @@ def build_checkpointer(settings: Settings | None = None) -> Any:
                 if pool is not None:
                     pool.close()
                 # 不在错误中泄露包含密码的数据库 URL。
-                raise RuntimeError("PostgreSQL Checkpointer 连接失败；请检查数据库配置和可用性") from None
+                raise RuntimeError(
+                    "PostgreSQL Checkpointer 连接失败；请检查数据库配置和可用性"
+                ) from None
             _CHECKPOINTERS[key] = saver
             return saver
     db_path = settings.workflow.checkpoint_db
@@ -181,7 +186,9 @@ def build_graph(
     builder.add_node("patch_review", patch_review_node)
     builder.add_node("apply", apply_node)
     builder.add_node("review", review_node)
+    builder.add_node("prepare_report", prepare_report_node)
     builder.add_node("report", report_node)
+    builder.add_edge("prepare_report", "report")
 
     # ---------------- 2. 入口 ----------------
     builder.add_edge(START, "orchestrator")
@@ -195,7 +202,7 @@ def build_graph(
             "revision": "revision",
             # Orchestrator 说“需要人拍板”时，统一走问题闸门（列出问题问用户）
             "human_approval": "issue_review",
-            "report": "report",
+            "report": "prepare_report",
         },
     )
 
@@ -206,7 +213,7 @@ def build_graph(
         {
             "issue_review": "issue_review",
             "revision": "revision",
-            "report": "report",
+            "report": "prepare_report",
         },
     )
 
@@ -216,7 +223,7 @@ def build_graph(
         route_after_issue_review,
         {
             "revision": "revision",
-            "report": "report",
+            "report": "prepare_report",
         },
     )
 
@@ -228,7 +235,7 @@ def build_graph(
         route_after_patch_review,
         {
             "apply": "apply",
-            "report": "report",
+            "report": "prepare_report",
         },
     )
 
@@ -239,7 +246,7 @@ def build_graph(
         "review",
         route_after_review,
         {
-            "report": "report",
+            "report": "prepare_report",
             "orchestrator": "orchestrator",
         },
     )

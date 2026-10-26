@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -41,6 +41,8 @@ class Run(Base):
     __tablename__ = "web_runs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     user_id: Mapped[str] = mapped_column(ForeignKey("web_users.id"), index=True)
+    # Historical runs are exempt; new submissions explicitly opt into the trial.
+    free_quota: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     stage: Mapped[str] = mapped_column(String(40), default="queued")
     version: Mapped[int] = mapped_column(Integer, default=1)
@@ -72,7 +74,9 @@ class Job(Base):
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
-    publish_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
+    publish_after: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, index=True
+    )
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     execution_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

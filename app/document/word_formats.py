@@ -3,14 +3,14 @@
 Conversion belongs in the background worker, not the HTTP upload request.
 WPS is accepted only when its actual container is Word-compatible.
 """
-from pathlib import Path
+
 import io
 import os
 import shutil
 import subprocess
 import tempfile
 import zipfile
-
+from pathlib import Path
 
 WORD_SUFFIXES = {".docx", ".doc", ".wps", ".rtf", ".odt"}
 OLE_SIGNATURE = bytes.fromhex("d0cf11e0a1b11ae1")
@@ -38,7 +38,10 @@ def validate_word(data: bytes, filename: str, *, max_bytes=20 * 1024 * 1024) -> 
                     raise WordFormatError("文档解压后过大")
                 if len(names) != len(set(names)) or any(i.flag_bits & 1 for i in items):
                     raise WordFormatError("不支持加密或结构异常的文档")
-                if any("vbaproject" in n.lower() or n.lower().startswith(("scripts/", "basic/")) for n in names):
+                if any(
+                    "vbaproject" in n.lower() or n.lower().startswith(("scripts/", "basic/"))
+                    for n in names
+                ):
                     raise WordFormatError("不支持包含宏的文件")
                 if {"[Content_Types].xml", "word/document.xml"}.issubset(names):
                     if b"macroEnabled" in archive.read("[Content_Types].xml"):
@@ -56,9 +59,13 @@ def validate_word(data: bytes, filename: str, *, max_bytes=20 * 1024 * 1024) -> 
     elif data.startswith(OLE_SIGNATURE) and suffix in {".doc", ".wps"}:
         try:
             import olefile
+
             with olefile.OleFileIO(io.BytesIO(data)) as document:
                 streams = ["/".join(p).lower() for p in document.listdir()]
-                if any("vba" in p or "macros" in p or p in {"encryptedpackage", "encryptioninfo"} for p in streams):
+                if any(
+                    "vba" in p or "macros" in p or p in {"encryptedpackage", "encryptioninfo"}
+                    for p in streams
+                ):
                     raise WordFormatError("不支持加密或包含宏的文档")
                 if "worddocument" not in streams:
                     raise WordFormatError("该 WPS/DOC 不是兼容 Word 的格式，请用原软件另存为 DOCX")
@@ -77,13 +84,19 @@ def validate_word(data: bytes, filename: str, *, max_bytes=20 * 1024 * 1024) -> 
     raise WordFormatError("文件不是有效或受支持的 Word 文档；旧版专有 WPS 请用 WPS 另存为 DOCX")
 
 
-def normalize_word(data: bytes, filename: str, *, max_bytes=20 * 1024 * 1024) -> tuple[bytes, list[str]]:
+def normalize_word(
+    data: bytes, filename: str, *, max_bytes=20 * 1024 * 1024
+) -> tuple[bytes, list[str]]:
     _, kind = validate_word(data, filename, max_bytes=max_bytes)
     if kind == "docx":
         return data, []
-    executable = os.getenv("PRA_LIBREOFFICE") or shutil.which("soffice") or shutil.which("libreoffice")
+    executable = (
+        os.getenv("PRA_LIBREOFFICE") or shutil.which("soffice") or shutil.which("libreoffice")
+    )
     if not executable:
-        raise WordFormatError("服务器未安装 LibreOffice 转换器，请安装后重试，或先将文件另存为 DOCX")
+        raise WordFormatError(
+            "服务器未安装 LibreOffice 转换器，请安装后重试，或先将文件另存为 DOCX"
+        )
     with tempfile.TemporaryDirectory(prefix="pra-word-") as directory:
         root = Path(directory)
         source = root / f"source.{kind}"
@@ -96,15 +109,29 @@ def normalize_word(data: bytes, filename: str, *, max_bytes=20 * 1024 * 1024) ->
             '<oor:items xmlns:oor="http://openoffice.org/2001/registry">'
             '<item oor:path="/org.openoffice.Office.Common/Security/Scripting">'
             '<prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop>'
-            '</item></oor:items>', encoding="utf-8")
+            "</item></oor:items>",
+            encoding="utf-8",
+        )
         output = root / "output"
         output.mkdir()
         try:
             completed = subprocess.run(
-                [executable, f"-env:UserInstallation={profile.as_uri()}", "--headless", "--nologo",
-                 "--nodefault", "--norestore", "--convert-to", "docx:Office Open XML Text",
-                 "--outdir", str(output), str(source)],
-                timeout=120, check=False, capture_output=True,
+                [
+                    executable,
+                    f"-env:UserInstallation={profile.as_uri()}",
+                    "--headless",
+                    "--nologo",
+                    "--nodefault",
+                    "--norestore",
+                    "--convert-to",
+                    "docx:Office Open XML Text",
+                    "--outdir",
+                    str(output),
+                    str(source),
+                ],
+                timeout=120,
+                check=False,
+                capture_output=True,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
         except subprocess.TimeoutExpired as exc:
@@ -113,7 +140,9 @@ def normalize_word(data: bytes, filename: str, *, max_bytes=20 * 1024 * 1024) ->
             raise WordFormatError("文档转换器无法启动，请联系管理员") from exc
         target = output / "source.docx"
         if completed.returncode != 0 or not target.is_file():
-            raise WordFormatError("文档无法转换，可能已加密、损坏或属于不兼容的旧版 WPS；请另存为 DOCX")
+            raise WordFormatError(
+                "文档无法转换，可能已加密、损坏或属于不兼容的旧版 WPS；请另存为 DOCX"
+            )
         if target.stat().st_size > MAX_EXPANDED:
             raise WordFormatError("转换后的文档过大")
         normalized = target.read_bytes()

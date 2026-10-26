@@ -87,7 +87,9 @@ class TraceRecorder:
                 for line in self.path.read_text(encoding="utf-8").splitlines():
                     try:
                         record = json.loads(line)
-                        self._events.append(TraceRecord(**{k: v for k, v in record.items() if k in allowed}))
+                        self._events.append(
+                            TraceRecord(**{k: v for k, v in record.items() if k in allowed})
+                        )
                     except (ValueError, TypeError, AttributeError):
                         continue
             except OSError:

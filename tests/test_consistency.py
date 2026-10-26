@@ -233,7 +233,8 @@ class TestDeletePatch(unittest.TestCase):
         )
         validate_patch(patch, self.spans)
         self.assertEqual(patch.status, "conflict")
-        self.assertIn("delete", patch.conflict_reason)
+        self.assertIn("已保留原文", patch.conflict_reason)
+        self.assertFalse(patch.delete)
 
 
 class TestProperNounVariants(unittest.TestCase):

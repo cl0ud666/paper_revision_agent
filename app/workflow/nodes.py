@@ -18,11 +18,13 @@ from typing import Any, Callable
 
 from langgraph.types import interrupt
 
-from app.agents import audit as audit_agent
-from app.agents import orchestrator as orchestrator_agent
-from app.agents import report as report_agent
-from app.agents import review as review_agent
-from app.agents import revision as revision_agent
+from app.agents import (
+    audit as audit_agent,
+    orchestrator as orchestrator_agent,
+    report as report_agent,
+    review as review_agent,
+    revision as revision_agent,
+)
 from app.config import get_settings
 from app.document.patches import (
     STATUS_ACCEPTED,
@@ -32,11 +34,20 @@ from app.document.patches import (
     Patch,
     apply_patches,
 )
-from app.document.spans import build_spans, index_summary
+from app.document.spans import build_spans, index_summary, resolve_span
 from app.utils.budget import BudgetExceeded, check, exceeded_snapshot, usage
-from app.utils.rules import apply_payload as apply_rules_payload
-from app.utils.rules import rule_texts
 from app.utils.tracing import get_recorder, utc_now
+
+# Re-export payload helpers for clients using the original node module.
+from app.workflow.payloads import (
+    _excluded_ids as _excluded_ids,
+    _patch_line as _patch_line,
+    _public_issue as _public_issue,
+    _public_patch as _public_patch,
+    normalize_human_payload as normalize_human_payload,
+    normalize_issue_payload as normalize_issue_payload,
+    normalize_patch_payload as normalize_patch_payload,
+)
 
 
 def _logger(logger: Callable[[str], None] | None = None) -> Callable[[str], None]:
@@ -62,9 +73,7 @@ def _recorder(state: Any):
 # ---------------------------------------------------------------- 节点实现
 
 
-def orchestrator_node(
-    state: Any, *, logger: Callable[[str], None] | None = None
-) -> dict[str, Any]:
+def orchestrator_node(state: Any, *, logger: Callable[[str], None] | None = None) -> dict[str, Any]:
     """初始规划 / 自适应重规划。"""
 
     log = _logger(logger)
@@ -116,6 +125,28 @@ def audit_node(state: Any, *, logger: Callable[[str], None] | None = None) -> di
             "errors": [f"Audit 审查异常：{type(exc).__name__}: {exc}"],
         }
 
+    if state.get("visual_review"):
+        deferred = list(state.get("deferred_advice") or [])
+        for issue in update.get("audit_findings") or []:
+            if (
+                state.get("decisions")
+                and issue.get("kind") == "decision"
+                and not issue.get("ignored")
+            ):
+                issue.update(
+                    kind="advice",
+                    deferred=True,
+                    deferred_reason="口径确认已结束；后续发现的新歧义不再询问，也不擅自改动",
+                )
+            if issue.get("kind") == "advice":
+                span = resolve_span(
+                    build_spans(state.get("current_document") or ""),
+                    span_id=issue.get("span_id", ""),
+                    label=issue.get("span_label", ""),
+                )
+                issue["audit_anchor_text"] = span.text if span else issue.get("evidence", "")
+                deferred.append(dict(issue))
+        update["deferred_advice"] = deferred
     # 新一轮审查产生的问题默认都未批准，必须重新经过人工确认
     issue_gate = get_settings().workflow.issue_gate
     update["issue_gate"] = issue_gate
@@ -155,8 +186,10 @@ def human_approval_node(
          "feedback": "第 3 条先不动"}
     """
 
+    if state.get("visual_review"):
+        return issue_review_node(state, logger=logger)
     log = _logger(logger)
-    findings = state.get("audit_findings") or []
+    findings = [dict(i) for i in state.get("audit_findings") or []]
 
     request = {
         "type": "human_approval",
@@ -231,9 +264,7 @@ def revision_node(state: Any, *, logger: Callable[[str], None] | None = None) ->
     }
 
 
-def issue_review_node(
-    state: Any, *, logger: Callable[[str], None] | None = None
-) -> dict[str, Any]:
+def issue_review_node(state: Any, *, logger: Callable[[str], None] | None = None) -> dict[str, Any]:
     """
     Audit 之后的问题闸门：逐条列出问题，问用户"有没有要忽略的"。
 
@@ -250,8 +281,24 @@ def issue_review_node(
     """
 
     log = _logger(logger)
-    findings = state.get("audit_findings") or []
+    findings = [dict(i) for i in state.get("audit_findings") or []]
+    if state.get("visual_review") and state.get("decisions"):
+        return {"trace": [_event(state, "issue_review", skipped=True)]}
     rules = list(state.get("user_rules") or [])
+    from app.document.review_items import manual_item, public_item
+
+    # An empty choice list is not a decision. Keep it for final manual review.
+    for issue in findings:
+        if issue.get("kind") == "decision":
+            issue["options"] = list(
+                dict.fromkeys(str(o).strip() for o in issue.get("options", []) if str(o).strip())
+            )
+            if len(issue["options"]) < 2:
+                issue.update(
+                    kind="advice",
+                    manual_required=True,
+                    blocked_reason="未形成可供选择的明确方案，系统无法替作者决定修改口径",
+                )
     # 只把**前后矛盾、必须由作者拍板**的问题拿出来问。
     # 写错的、可以更好的都不打扰用户——那些要么自动改，要么只留批注。
     pending = [
@@ -268,6 +315,13 @@ def issue_review_node(
     if not pending:
         log("[Human] 没有需要你拍板的矛盾，跳过这一步。")
         return {
+            "audit_findings": findings,
+            "manual_items": list(state.get("manual_items") or [])
+            + [
+                manual_item(i, i["blocked_reason"])
+                for i in findings
+                if i.get("manual_required") and not i.get("ignored")
+            ],
             "trace": [_event(state, "issue_review", skipped=True, pending=0)],
         }
 
@@ -276,10 +330,14 @@ def issue_review_node(
         "run_id": state.get("run_id", "adhoc"),
         "turn": int(state.get("turn", 1)),
         "iteration": int(state.get("iteration", 0)),
-        "issues": [_public_issue(issue) for issue in pending],
-        "remembered": [
-            {"id": rule.get("id"), "text": rule.get("text")} for rule in remembered
+        "issues": [
+            {
+                **_public_issue(issue),
+                "display": public_item(issue, state.get("current_document", "")),
+            }
+            for issue in pending
         ],
+        "remembered": [{"id": rule.get("id"), "text": rule.get("text")} for rule in remembered],
         "rules": [
             {"id": rule.get("id"), "text": rule.get("text")}
             for rule in rules
@@ -296,15 +354,17 @@ def issue_review_node(
     }
 
     payload = interrupt(request)
-    update = normalize_issue_payload(
-        payload, findings, rules=rules, turn=int(state.get("turn", 1))
+    update = normalize_issue_payload(payload, findings, rules=rules, turn=int(state.get("turn", 1)))
+    update["selected_decisions"] = list(state.get("selected_decisions") or []) + update.get(
+        "selected_decisions", []
     )
+    update["manual_items"] = list(state.get("manual_items") or []) + update.get("manual_items", [])
     ignored_ids = [
         issue.get("id") for issue in update.get("audit_findings") or [] if issue.get("ignored")
     ]
     log(
         f"[Human] 已忽略 {len(ignored_ids)} 个问题；"
-       f"当前共有 {len(update.get('user_rules') or [])} 条要求/决定。"
+        f"当前共有 {len(update.get('user_rules') or [])} 条要求/决定。"
     )
 
     return {
@@ -323,87 +383,7 @@ def issue_review_node(
     }
 
 
-def normalize_issue_payload(
-    payload: Any,
-    findings: list[dict[str, Any]],
-    *,
-    rules: list[dict[str, Any]] | None = None,
-    turn: int = 1,
-) -> dict[str, Any]:
-    """规范化问题闸门的输入，并把决定写进 user_rules。"""
-
-    payload = payload if isinstance(payload, dict) else {}
-    updated_findings = [dict(issue) for issue in findings]
-
-    # 兼容旧写法：{"approved_issue_ids": [1, 3]} 表示“只改这些”
-    if "approved_issue_ids" in payload:
-        wanted = _as_id_set(payload.get("approved_issue_ids"))
-        payload = {
-            **payload,
-            "ignore_ids": [
-                issue.get("id")
-                for issue in updated_findings
-                if not issue.get("ignored") and str(issue.get("id")) not in wanted
-            ],
-        }
-
-    new_rules, created = apply_rules_payload(
-        list(rules or []),
-        payload,
-        turn=turn,
-        source="issue_review",
-        issues=updated_findings,
-    )
-    ignored_ids = [issue.get("id") for issue in updated_findings if issue.get("ignored")]
-
-    return {
-        "user_rules": new_rules,
-        "human_constraints": rule_texts(new_rules),
-        "audit_findings": updated_findings,
-        "rules_added": created,
-        "approved_issue_ids": [
-            issue.get("id") for issue in updated_findings if not issue.get("ignored")
-        ],
-        "human_decision": "approve",
-        "human_rounds": [
-            {
-                "type": "issue_review",
-                "turn": turn,
-                "ignored": ignored_ids,
-                "approved": [
-                    issue.get("id") for issue in updated_findings if not issue.get("ignored")
-                ],
-                "added_rules": [rule.get("id") for rule in created],
-                "timestamp": utc_now(),
-            }
-        ],
-    }
-
-
-ISSUE_FIELDS = (
-    "id",
-    "kind",
-    "options",
-    "span_labels",
-    "span_label",
-    "category",
-    "severity",
-    "location",
-    "problem",
-    "evidence",
-    "suggestion",
-    "ignored",
-    "warning",
-)
-
-
-def _public_issue(issue: dict[str, Any]) -> dict[str, Any]:
-    return {key: issue.get(key) for key in ISSUE_FIELDS if issue.get(key) is not None}
-
-
-def patch_review_node(
-    state: Any, *, logger: Callable[[str], None] | None = None
-) -> dict[str, Any]:
+def patch_review_node(state: Any, *, logger: Callable[[str], None] | None = None) -> dict[str, Any]:
     """
     补丁审阅闸门：把本轮**全部**改动一次性交给用户逐条接受 / 拒绝。
 
@@ -424,7 +404,7 @@ def patch_review_node(
 
     # 默认不打断用户：Revision 已经在清单里写清了「原文 / 准备修改为 / 原因」，
     # 需要人拍板的"前后矛盾"在 Audit 之后也问过一次了，这里再让用户逐条勾一遍是重复劳动。
-    if not get_settings().workflow.patch_gate:
+    if state.get("visual_review") or not get_settings().workflow.patch_gate:
         for patch in patches:
             log(_patch_line(patch))
         update = normalize_patch_payload({"accept_all": True}, patches)
@@ -455,8 +435,7 @@ def patch_review_node(
         "patches": [_public_patch(patch) for patch in patches],
         "decidable_ids": [patch.get("patch_id") for patch in decidable],
         "instruction": (
-            "请勾选要接受的改动（默认全选）。"
-            "被拒绝的改动不会写进论文，也不需要你写理由。"
+            "请勾选要接受的改动（默认全选）。被拒绝的改动不会写进论文，也不需要你写理由。"
         ),
         "defaults": {"accept_all": True},
     }
@@ -490,14 +469,21 @@ def apply_node(state: Any, *, logger: Callable[[str], None] | None = None) -> di
     version = int(state.get("document_version", 1))
     raw_patches = state.get("proposed_patches") or []
     patches = [Patch.from_json(item) for item in raw_patches]
+    from app.document.review_items import decision_conflict
+
+    for patch in patches:
+        conflict = decision_conflict(
+            patch, state.get("selected_decisions"), build_spans(document, version=version)
+        )
+        if conflict and patch.status == STATUS_ACCEPTED:
+            patch.status, patch.conflict_reason = STATUS_CONFLICT, conflict
     accepted = [patch for patch in patches if patch.status == STATUS_ACCEPTED]
     rejected = [patch for patch in patches if patch.status == STATUS_REJECTED]
     conflicts = [patch for patch in patches if patch.status == STATUS_CONFLICT]
 
     if not document.strip() or not accepted:
         summary = (
-            f"本轮没有需要应用的改动（拒绝 {len(rejected)} 条，"
-            f"无法定位 {len(conflicts)} 条）。"
+            f"本轮没有需要应用的改动（拒绝 {len(rejected)} 条，无法定位 {len(conflicts)} 条）。"
         )
         log(f"[Apply] {summary}")
         return {
@@ -586,6 +572,17 @@ def review_node(state: Any, *, logger: Callable[[str], None] | None = None) -> d
     }
 
 
+def prepare_report_node(
+    state: Any, *, logger: Callable[[str], None] | None = None
+) -> dict[str, Any]:
+    if not state.get("visual_review") or state.get("final_review_ready"):
+        return {}
+    from app.document.preview import prepare_visual_review
+
+    prepared = prepare_visual_review(state, get_settings().paths.run_dir(state["run_id"]))
+    return {**prepared, "final_review_ready": True}
+
+
 def report_node(state: Any, *, logger: Callable[[str], None] | None = None) -> dict[str, Any]:
     """
     汇总报告并落盘。
@@ -611,6 +608,19 @@ def report_node(state: Any, *, logger: Callable[[str], None] | None = None) -> d
     return {
         **update,
         "excluded_patch_ids": list(state.get("excluded_patch_ids") or []),
+        **(
+            {
+                "final_review_confirmed": True,
+                "unfinished_items": update.get(
+                    "unfinished_items", state.get("unfinished_items", [])
+                ),
+                "current_document": update.get(
+                    "current_document", state.get("current_document", "")
+                ),
+            }
+            if state.get("visual_review")
+            else {}
+        ),
         "trace": [_event(state, "report", finished_at=utc_now())],
     }
 
@@ -623,6 +633,57 @@ def _confirm_before_writing(state: Any, log: Callable[[str], None]) -> dict[str,
     「问题 / 改为什么 / 原因」一次性给用户看，让他剔除不要的。
     """
 
+    if state.get("visual_review"):
+        if not state.get("final_review_ready"):
+            raise ValueError("最终审阅清单未冻结，禁止直接导出")
+        if state.get("final_review_confirmed"):
+            return state
+        patches = state.get("final_patches") or []
+        request = {
+            "type": "final_confirm",
+            "visual": True,
+            "run_id": state["run_id"],
+            "patches": patches,
+            "patch_count": len(patches),
+            "preview": state.get("preview_manifest") or {},
+            "manual_items": state.get("final_manual_items") or [],
+            "defaults": {"excluded_ids": state.get("excluded_patch_ids") or []},
+            "instruction": "勾选表示采用修改，取消勾选保留原文；确认后不再新增修改。",
+        }
+        payload = interrupt(request)
+        excluded = _excluded_ids(payload, patches)
+        from app.document.final_review import unfinished_items
+
+        unfinished = unfinished_items({**state, "excluded_patch_ids": excluded})
+        for patch in patches:
+            if patch["patch_id"] in excluded:
+                unfinished.append(
+                    {
+                        "patch_id": patch["patch_id"],
+                        "title": patch["before"],
+                        "reason": "用户在最终确认中取消勾选，保持原文",
+                        "position": patch.get("position", ""),
+                        "kind": "not_selected",
+                    }
+                )
+        document = state["original_document"]
+        for patch in sorted(patches, key=lambda p: p["original_start"], reverse=True):
+            if (
+                patch["patch_id"] not in excluded
+                and patch.get("action", "replace_text") == "replace_text"
+            ):
+                document = (
+                    document[: patch["original_start"]]
+                    + patch["replace"]
+                    + document[patch["original_end"] :]
+                )
+        return {
+            **state,
+            "excluded_patch_ids": excluded,
+            "unfinished_items": unfinished,
+            "current_document": document,
+            "final_review_confirmed": True,
+        }
     patches = list(state.get("applied_patches") or [])
     if not patches or not get_settings().workflow.final_confirm:
         return state
@@ -634,9 +695,7 @@ def _confirm_before_writing(state: Any, log: Callable[[str], None]) -> dict[str,
         "patch_count": len(patches),
         # 把"这条改动是冲着哪个问题去的"一起带上：
         # 用户最后看到的是「问题 / 改为什么 / 原因」三行，缺了 problem 就只剩分类。
-        "patches": _merge_unification_items(
-            [_confirm_item(patch, state) for patch in patches]
-        ),
+        "patches": _merge_unification_items([_confirm_item(patch, state) for patch in patches]),
         "instruction": (
             "以上是本次全部改动，**确认后写入 Word 副本**（原文件不动）。"
             "要剔除哪几条就输入编号（例如 2,5）；直接回车 = 全部写入；none = 都不写入。"
@@ -706,320 +765,3 @@ def _merge_unification_items(items: list[dict[str, Any]]) -> list[dict[str, Any]
         if label and label not in bucket["span_labels"]:
             bucket["span_labels"].append(label)
     return merged
-
-
-def _excluded_ids(payload: Any, patches: list[dict[str, Any]]) -> list[str]:
-    """解析"剔除哪几条"：支持 excluded_ids / 编号 / none。"""
-
-    data = payload if isinstance(payload, dict) else {}
-    if data.get("exclude_all"):
-        return [str(patch.get("patch_id") or "") for patch in patches]
-
-    raw = data.get("excluded_ids") or data.get("numbers") or []
-    if isinstance(raw, str):
-        raw = [piece.strip() for piece in raw.replace("，", ",").split(",") if piece.strip()]
-
-    known = {str(patch.get("patch_id") or "") for patch in patches}
-    by_number = {
-        str(position): str(patch.get("patch_id") or "")
-        for position, patch in enumerate(patches, start=1)
-    }
-
-    wanted: list[str] = []
-    for item in raw:
-        key = str(item).strip()
-        if key in by_number:
-            wanted.append(by_number[key])
-        elif key in known:
-            wanted.append(key)
-    return [patch_id for patch_id in dict.fromkeys(wanted) if patch_id]
-
-
-# ---------------------------------------------------------------- 工具函数
-
-
-def normalize_human_payload(
-    payload: Any, findings: list[dict[str, Any]]
-) -> dict[str, Any]:
-    """
-    规范化人工确认的输入，容忍多种写法。
-
-    支持：
-
-    - approved_issue_ids: [1, 2] / ["all"] / ["none"] / 1 / "1,2"
-    - constraints: ["..."] 或 "用分号/换行分隔的字符串"
-    - decision: approve / reject（默认 approve）
-    """
-
-    all_ids = [issue.get("id") for issue in findings if issue.get("id") is not None]
-    payload = payload if isinstance(payload, dict) else {}
-
-    decision = str(payload.get("decision") or "approve").strip().lower()
-    if decision not in {"approve", "reject"}:
-        decision = "approve"
-
-    approved_ids = _parse_ids(payload.get("approved_issue_ids"), all_ids)
-
-    raw_constraints = payload.get("constraints")
-    if raw_constraints is None:
-        constraints: list[str] = []
-    elif isinstance(raw_constraints, str):
-        pieces = raw_constraints.replace("；", "\n").replace(";", "\n").split("\n")
-        constraints = [piece.strip(" -•\t") for piece in pieces]
-        constraints = [piece for piece in constraints if piece]
-    else:
-        constraints = [str(item).strip() for item in raw_constraints if str(item).strip()]
-
-    feedback = str(payload.get("feedback") or "").strip()
-
-    approved_set = set(approved_ids)
-    updated_findings: list[dict[str, Any]] = []
-    for issue in findings:
-        item = dict(issue)
-        item["approved"] = item.get("id") in approved_set
-        updated_findings.append(item)
-
-    return {
-        "approved_issue_ids": approved_ids,
-        "human_constraints": constraints,
-        "human_feedback": feedback,
-        "human_decision": decision,
-        "audit_findings": updated_findings,
-        "human_rounds": [
-            {
-                "iteration": payload.get("iteration"),
-                "decision": decision,
-                "approved": approved_ids,
-                "constraints": constraints,
-                "feedback": feedback,
-                "timestamp": utc_now(),
-            }
-        ],
-    }
-
-
-def _parse_ids(raw_ids: Any, all_ids: list[Any]) -> list[int]:
-    """把各种写法的问题编号统一成 int 列表。"""
-
-    if raw_ids is None:
-        return [int(issue_id) for issue_id in all_ids]
-
-    if isinstance(raw_ids, str):
-        text = raw_ids.strip().lower()
-        if text in {"all", "全部", "*", ""}:
-            return [int(issue_id) for issue_id in all_ids]
-        if text in {"none", "无", "不修改"}:
-            return []
-        candidates: list[Any] = text.replace("，", ",").split(",")
-    elif isinstance(raw_ids, (int, float)):
-        candidates = [raw_ids]
-    else:
-        candidates = list(raw_ids or [])
-
-    parsed: list[int] = []
-    for item in candidates:
-        if isinstance(item, bool):
-            continue
-        if isinstance(item, (int, float)):
-            parsed.append(int(item))
-        elif isinstance(item, str) and item.strip().isdigit():
-            parsed.append(int(item.strip()))
-
-    allowed = {int(issue_id) for issue_id in all_ids}
-    return [issue_id for issue_id in parsed if issue_id in allowed]
-
-
-PATCH_FIELDS = (
-    "patch_id",
-    "issue_id",
-    "span_id",
-    "span_label",
-    "sentence_ref",
-    "position",
-    "strategy",
-    "status",
-    "status_label",
-    "conflict_code",
-    "before",
-    "replace",
-    "rationale",
-    "category",
-    "severity",
-    "conflict_reason",
-    "warnings",
-    "round",
-    "decided_by",
-    "decision_note",
-)
-
-
-def _patch_line(patch: dict[str, Any]) -> str:
-    """
-    Revision 报给用户看的格式（批注闸门关闭时由它输出）。
-
-    固定三行——原文 / 准备修改为 / 原因，和 Word 批注保持一致，
-    用户看一遍就知道要改什么、为什么改，不需要再逐条确认。
-    """
-
-    where = patch.get("position") or patch.get("span_label") or patch.get("span_id") or ""
-    lines = [f"[{patch.get('patch_id')}] {where}"]
-    before = str(patch.get("before") or patch.get("quote") or "").strip()
-    after = "（删除）" if patch.get("delete") else str(patch.get("replace") or "").strip()
-    reason = str(patch.get("rationale") or "").strip()
-    if before:
-        lines.append(f"    原文：{before}")
-    if after:
-        lines.append(f"    准备修改为：{after}")
-    if reason:
-        lines.append(f"    原因：{reason}")
-    return "\n".join(lines)
-
-
-def _public_patch(patch: dict[str, Any]) -> dict[str, Any]:
-    """给前端 / 命令行看的补丁视图（不含内部定位偏移）。"""
-
-    return {key: patch.get(key) for key in PATCH_FIELDS if patch.get(key) is not None}
-
-
-def normalize_patch_payload(
-    payload: Any, patches: list[dict[str, Any]]
-) -> dict[str, Any]:
-    """
-    把用户的补丁决定规范化。
-
-    默认是**全部接受**（界面上复选框默认勾选），
-    用户只需要取消掉不想要的几条，不用写理由。
-    """
-
-    payload = payload if isinstance(payload, dict) else {}
-    decidable = [
-        patch for patch in patches if patch.get("status") == STATUS_PROPOSED
-    ]
-    decidable_ids = [str(patch.get("patch_id")) for patch in decidable]
-
-    # 1) 逐条 decisions（最灵活）
-    decision_map: dict[str, str] = {}
-    raw_decisions = payload.get("decisions")
-    if isinstance(raw_decisions, dict):
-        for patch_id, value in raw_decisions.items():
-            decision = value.get("decision") if isinstance(value, dict) else value
-            decision_map[str(patch_id)] = str(decision or "").strip().lower()
-    elif isinstance(raw_decisions, list):
-        for item in raw_decisions:
-            if isinstance(item, dict) and item.get("patch_id"):
-                decision_map[str(item["patch_id"])] = str(
-                    item.get("decision") or "accept"
-                ).strip().lower()
-            elif isinstance(item, str):
-                decision_map[item] = "accept"
-
-    # 2) 白名单 / 黑名单
-    accepted_ids = payload.get("accepted_ids")
-    rejected_ids = payload.get("rejected_ids")
-    if not decision_map and isinstance(accepted_ids, (list, tuple, set, str)):
-        wanted = _as_id_set(accepted_ids)
-        decision_map = {
-            patch_id: ("accept" if patch_id in wanted else "reject")
-            for patch_id in decidable_ids
-        }
-    elif not decision_map and isinstance(rejected_ids, (list, tuple, set, str)):
-        unwanted = _as_id_set(rejected_ids)
-        decision_map = {
-            patch_id: ("reject" if patch_id in unwanted else "accept")
-            for patch_id in decidable_ids
-        }
-
-    # 3) 全接受 / 全拒绝；都没给就默认全接受
-    if not decision_map:
-        default = "reject" if payload.get("reject_all") else "accept"
-        decision_map = {patch_id: default for patch_id in decidable_ids}
-
-    note = str(payload.get("note") or payload.get("feedback") or "").strip()
-    now = utc_now()
-    updated: list[dict[str, Any]] = []
-    accepted: list[dict[str, Any]] = []
-    rejected: list[dict[str, Any]] = []
-
-    for patch in patches:
-        item = dict(patch)
-        patch_id = str(item.get("patch_id"))
-        if item.get("status") == STATUS_PROPOSED:
-            decision = decision_map.get(patch_id, "accept")
-            if decision not in {"accept", "reject"}:
-                decision = "accept"
-            if decision == "accept":
-                item["status"] = STATUS_ACCEPTED
-                accepted.append(item)
-            else:
-                item["status"] = STATUS_REJECTED
-                rejected.append(item)
-            item["decided_by"] = "user"
-            item["decided_at"] = now
-            if note:
-                item["decision_note"] = note
-        elif item.get("status") == STATUS_REJECTED:
-            rejected.append(item)
-        elif item.get("status") == STATUS_ACCEPTED:
-            accepted.append(item)
-        updated.append(item)
-
-    rejected_memory = [
-        {
-            "patch_id": patch.get("patch_id"),
-            "span_id": patch.get("span_id"),
-            "span_label": patch.get("span_label"),
-            "before": patch.get("before"),
-            "replace": patch.get("replace"),
-            "rationale": patch.get("rationale"),
-            "note": patch.get("decision_note", ""),
-            "turn": payload.get("turn"),
-            "round": patch.get("round"),
-            "at": now,
-        }
-        for patch in rejected
-        if patch.get("decided_by") == "user"
-    ]
-
-    stats = {
-        "proposed": sum(1 for patch in updated if patch.get("status") == STATUS_PROPOSED),
-        "accepted": len(accepted),
-        "rejected": len(rejected),
-        "applied": 0,
-        "conflict": sum(1 for patch in updated if patch.get("status") == STATUS_CONFLICT),
-    }
-
-    return {
-        "proposed_patches": updated,
-        "patch_decisions": {
-            patch.get("patch_id"): {
-                "decision": "accept"
-                if patch.get("status") == STATUS_ACCEPTED
-                else "reject",
-                "note": patch.get("decision_note", ""),
-                "decided_by": patch.get("decided_by", "user"),
-                "at": patch.get("decided_at", now),
-            }
-            for patch in updated
-            if patch.get("status") in {STATUS_ACCEPTED, STATUS_REJECTED}
-        },
-        "patch_stats": stats,
-        "rejected_patches": [patch for patch in rejected if patch.get("decided_by") == "user"],
-        "rejected_memory": rejected_memory,
-        "human_rounds": [
-            {
-                "type": "patch_review",
-                "turn": payload.get("turn"),
-                "accepted": [patch.get("patch_id") for patch in accepted],
-                "rejected": [patch.get("patch_id") for patch in rejected],
-                "note": note,
-                "timestamp": now,
-            }
-        ],
-    }
-
-
-def _as_id_set(value: Any) -> set[str]:
-    if isinstance(value, str):
-        parts = value.replace("，", ",").split(",")
-        return {part.strip() for part in parts if part.strip()}
-    return {str(item).strip() for item in value if str(item).strip()}

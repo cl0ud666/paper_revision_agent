@@ -30,6 +30,27 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, Callable
 
+from app.agents.audit_context import (
+    _build_comparisons as _build_comparisons,
+    _consistency_hint as _consistency_hint,
+    _is_chapter_heading as _is_chapter_heading,
+    _is_conclusion_span as _is_conclusion_span,
+    _name_candidates as _name_candidates,
+    _name_context_snippet as _name_context_snippet,
+    _render_name_list as _render_name_list,
+    _render_numbered_sentences as _render_numbered_sentences,
+    _render_section_tails as _render_section_tails,
+)
+
+# Compatibility exports keep existing integrations working during module migration.
+from app.agents.audit_findings import (
+    MIN_EVIDENCE_CHARS,
+    _merge_issues as _merge_issues,
+    _merge_systematic as _merge_systematic,
+    _normalize_issue as _normalize_issue,
+    _same_kind as _same_kind,
+    _screen as _screen,
+)
 from app.agents.prompts import (
     AUDIT_SYSTEM,
     CROSS_CHECK_SYSTEM,
@@ -49,19 +70,13 @@ from app.document.spans import (
     chunk_spans,
     index_summary,
     render_annotated,
-    resolve_span,
     select_auditable,
     structure_report,
 )
-from app.state.schema import ISSUE_CATEGORIES, SEVERITY_ORDER
+from app.state.schema import SEVERITY_ORDER
 from app.utils.budget import BudgetExceeded, check, exceeded_snapshot, usage
 from app.utils.consistency import (
-    collect_proper_names,
-    describe_entity_check,
-    describe_naming_variants,
-    find_cross_section_gaps,
     find_naming_variants,
-    find_near_miss_names,
 )
 from app.utils.context import build_context, format_context
 from app.utils.json_utils import parse_json_object
@@ -70,156 +85,8 @@ from app.utils.resilience import get_guard
 from app.utils.rules import is_ignored
 from app.utils.text import (
     estimate_tokens,
-    locate_section,
     looks_like_code,
-    normalize_whitespace,
-    similarity,
 )
-
-SEVERITIES = ("high", "medium", "low")
-SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2}
-
-
-def _consistency_hint(
-    chunk_labels: set[str],
-    *,
-    naming: list[dict[str, Any]],
-    gaps: list[dict[str, Any]],
-    near_misses: list[dict[str, Any]],
-) -> str:
-    """
-    只挑"与本批次有关"的一致性线索放进上下文。
-
-    全量塞进去有两个坏处：占掉审查正文的预算；同一个词会被每批评一次。
-    所以三类线索都按"是否出现在本批次"过滤。
-    """
-
-    def relevant(labels: list[str]) -> bool:
-        return any(label in chunk_labels for label in labels)
-
-    relevant_naming = [
-        item
-        for item in naming
-        if relevant([label for labels in (item.get("variants") or {}).values() for label in labels])
-    ]
-    relevant_gaps = [item for item in gaps if relevant(list(item.get("labels") or []))]
-    relevant_misses = [
-        item
-        for item in near_misses
-        if relevant(list(item.get("suspected_labels") or []))
-        or relevant(list(item.get("likely_labels") or []))
-    ]
-
-    sections: list[str] = []
-    naming_text = describe_naming_variants(relevant_naming)
-    if naming_text:
-        sections.append(naming_text)
-    sections.extend(describe_entity_check(relevant_gaps, relevant_misses))
-    return "\n\n".join(sections)
-
-
-# ---------------------------------------------------------------- 专名核验
-
-# 一次核验最多看多少个专名（清单很短，几十个词足够覆盖一篇论文）
-MAX_NAME_CANDIDATES = 60
-
-
-def _name_context_snippet(text: str, form: str, *, width: int = 26) -> str:
-    """取专名附近的一小段原文，给模型判断"这是不是那个产品/方法"。"""
-
-    index = text.find(form)
-    if index < 0:
-        return ""
-    start = max(0, index - width)
-    end = min(len(text), index + len(form) + width)
-    # 压成一行：清单是一条一行，原文里夹换行会把列表撑乱
-    return normalize_whitespace(text[start:end])
-
-
-def _name_candidates(
-    spans: list[Span],
-    *,
-    exclude: set[str] | None = None,
-    limit: int = MAX_NAME_CANDIDATES,
-) -> list[dict[str, Any]]:
-    """
-    挑出要核验的专名清单。
-
-    排序刻意"罕见优先"：真正的错字通常只出现一两次，
-    而出现几十次的词基本是作者反复在用的正确写法。
-    """
-
-    blocked = exclude or set()
-    stats = collect_proper_names(spans)
-    by_label = {span.label: span for span in spans}
-
-    candidates: list[dict[str, Any]] = []
-    for form, stat in stats.items():
-        if form in blocked:
-            continue
-        snippet = ""
-        for label in stat.labels:
-            span = by_label.get(label)
-            if span is not None:
-                snippet = _name_context_snippet(span.text, form)
-                if snippet:
-                    break
-        candidates.append(
-            {
-                "name": form,
-                "count": stat.count,
-                "labels": list(stat.labels)[:4],
-                "snippet": snippet,
-            }
-        )
-    candidates.sort(key=lambda item: (int(item["count"]), str(item["name"])))
-    return candidates[:limit]
-
-
-def _render_name_list(candidates: list[dict[str, Any]]) -> str:
-    lines = []
-    for item in candidates:
-        where = "、".join(item.get("labels") or []) or "未定位"
-        snippet = item.get("snippet") or ""
-        tail = f"　原文：…{snippet}…" if snippet else ""
-        lines.append(f"- {item['name']}（出现 {item['count']} 次，见 {where}）{tail}")
-    return "\n".join(lines)
-
-
-def _name_issue(
-    spans: list[Span],
-    *,
-    form: str,
-    correct: str,
-    reason: str,
-    source: str,
-) -> dict[str, Any] | None:
-    """
-    把"某个专名写法不对"变成一条可核对的问题。
-
-    evidence 直接从原文里取一段（保证逐字可核对），span 取第一次出现的位置。
-    """
-
-    for span in spans:
-        if form not in span.text:
-            continue
-        evidence = _name_context_snippet(span.text, form, width=24)
-        if len(evidence) < MIN_EVIDENCE_CHARS:
-            evidence = span.text.strip()[:120]
-        if len(evidence) < MIN_EVIDENCE_CHARS:
-            return None
-        return {
-            "category": "专有名词",
-            "severity": "medium",
-            "location": span.section or span.label,
-            "problem": f"「{form}」写法有误：应为「{correct}」。（{reason}）",
-            "evidence": evidence,
-            "suggestion": f"把「{form}」改成「{correct}」，并检查全文其它位置是否同错",
-            "span_id": span.id,
-            "span_label": span.label,
-            "source": source,
-        }
-    return None
 
 
 def _name_check_issues(
@@ -231,51 +98,11 @@ def _name_check_issues(
     iteration: int,
     run_id: str,
 ) -> list[dict[str, Any]]:
-    """
-    专名核验：**单独一次调用**判断"写法本身对不对"。
-
-    两类来源：
-
-    1. 确定性：文中已经出现对照（P04 写 ESC、P03 写 ECS）——不需要模型；
-    2. 世界知识：阿里云的产品就叫 ECS，**正确写法根本不需要出现在文中**，
-       所以只能靠模型对领域/产品的既有知识来判断——
-       这正是"再看前后文"抓不到的那一类。
-
-    为什么单独一次调用而不是塞进逐段审查：混在"审论证、审表达"的任务里，
-    模型不会去核每个专名的标准写法（这就是同一篇论文跑三次只中一次的原因）。
-    清单很短，单独核一遍很便宜，而且**每次都核到全部专名**。
-    """
-
-    issues: list[dict[str, Any]] = []
-    seen: set[str] = set()
-
-    # 1) 文中已有对照：确定性，不花模型调用
-    for item in find_near_miss_names(spans):
-        suspected = str(item.get("suspected") or "")
-        likely = str(item.get("likely") or "")
-        if not suspected or not likely:
-            continue
-        issue = _name_issue(
-            spans,
-            form=suspected,
-            correct=likely,
-            reason=f"文中多处写作「{likely}」，两者只差一个字符，疑似笔误",
-            source="name_check",
-        )
-        if issue is not None:
-            seen.add(suspected)
-            issues.append(issue)
-
-    # 2) 世界知识核验
-    candidates = _name_candidates(spans, exclude=seen)
+    """术语只在有段落语义依据时判错，不由频次或编辑距离直接生成问题。"""
+    candidates = _name_candidates(spans)
     if not candidates:
-        return issues
-
-    fields = build_context(
-        state,
-        "audit",
-        extra={"name_list": _render_name_list(candidates)},
-    )
+        return []
+    fields = build_context(state, "audit", extra={"name_list": _render_name_list(candidates)})
     prompt = render_name_check_prompt(format_context(fields))
     guard = get_guard("audit", on_event=log)
     try:
@@ -296,42 +123,74 @@ def _name_check_issues(
             extra={"candidates": len(candidates)},
         )
         data = parse_json_object(response.text, required_keys=(), context="TermCheck")
-    except Exception as exc:  # noqa: BLE001 - 核验失败只保留确定性结果
-        log(f"[Audit] 专名核验失败（{type(exc).__name__}: {exc}），只保留词表比对结果。")
-        return issues
+    except Exception as exc:  # 核验失败不能退回词频猜错
+        log(f"[Audit] 专名核验失败（{type(exc).__name__}: {exc}），本次不生成术语错误结论。")
+        return []
 
-    known = {item["name"] for item in candidates}
+    known = {item["name"]: {c["span_label"] for c in item["contexts"]} for item in candidates}
+    by_label = {span.label: span for span in spans}
+    issues, seen = [], set()
     for item in data.get("suspected") or []:
         if not isinstance(item, dict):
             continue
         form = str(item.get("name") or "").strip()
         correct = str(item.get("correct") or "").strip()
-        reason = str(item.get("reason") or "").strip() or "写法不符合该名称的标准形式"
-        confidence = str(item.get("confidence") or "medium").strip().lower()
-        if not form or not correct or form == correct:
+        label = str(item.get("span_label") or "").strip()
+        evidence = str(item.get("evidence") or "").strip()
+        reason = str(item.get("reason") or "").strip()
+        basis = str(item.get("context_basis") or "").strip()
+        span = by_label.get(label)
+        if (
+            not form
+            or not correct
+            or form == correct
+            or form not in known
+            or label not in known[form]
+            or span is None
+            or str(item.get("confidence") or "").lower() != "high"
+        ):
             continue
-        if form not in known:
-            continue  # 模型自己造的词，不接受（防幻觉）
-        if confidence == "low":
+        # A token or invented quotation is not contextual evidence.
+        if (
+            len(evidence) < MIN_EVIDENCE_CHARS
+            or evidence not in span.text
+            or not re.search(r"(?<![A-Za-z0-9_])" + re.escape(form) + r"(?![A-Za-z0-9_])", evidence)
+            or not reason
+            or not basis
+            or basis not in span.text
+            or len(basis.replace(form, "").strip()) < 4
+        ):
             continue
-        if form in seen:
+        # Even a "high confidence" response cannot use frequency/edit distance
+        # as its justification. Both fields are checked, not just the prompt.
+        if re.search(
+            r"只出现|仅出现|出现.{0,8}次|高频|低频|多数|少数|罕见|只差.{0,4}(字符|字母)|编辑距离|疑似笔误|疑似拼写",
+            reason,
+        ):
             continue
-        issue = _name_issue(
-            spans, form=form, correct=correct, reason=reason, source="name_check"
+        identity = (form, correct, label)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        issues.append(
+            {
+                "kind": "fix",
+                "category": "专有名词",
+                "severity": "medium",
+                "location": span.section or span.label,
+                "problem": f"此处「{form}」与段落语义不符，建议改为「{correct}」：{reason}",
+                "evidence": evidence,
+                "context_basis": basis,
+                "suggestion": f"仅在 [{label}] 引用的这处上下文中将「{form}」改为「{correct}」；其他位置需分别核对",
+                "span_id": span.id,
+                "span_label": span.label,
+                "source": "name_check",
+            }
         )
-        if issue is not None:
-            seen.add(form)
-            issues.append(issue)
-
-    log(f"[Audit] 专名核验：核了 {len(candidates)} 个专名，发现 {len(issues)} 处疑似写法问题。")
+    log(
+        f"[Audit] 专名核验：核了 {len(candidates)} 个专名，确认 {len(issues)} 处有上下文依据的问题。"
+    )
     return issues
-
-
-# 证据必须能在段落里逐字找到，且不能太短（太短容易"碰巧命中"）
-MIN_EVIDENCE_CHARS = 8
-
-# 同类系统性问题聚合的相似度阈值
-SYSTEMATIC_SIMILARITY = 0.6
 
 
 def _serialized_logger(log: Callable[[str], None]) -> Callable[[str], None]:
@@ -521,17 +380,13 @@ def _run_chunks(
             for index, chunk in targets()
         }
         if futures:
-            emitter(
-                f"[Audit] 并发审查 {len(futures)}/{total} 个分块（并发度 {concurrency}）。"
-            )
+            emitter(f"[Audit] 并发审查 {len(futures)}/{total} 个分块（并发度 {concurrency}）。")
         for future in as_completed(futures):
             index = futures[future]
             try:
                 batch.outcomes[index] = future.result()
             except Exception as exc:  # noqa: BLE001 - 兜底：工作线程自身的异常
-                batch.outcomes[index] = _ChunkOutcome(
-                    index=index, failed=True, error=str(exc)
-                )
+                batch.outcomes[index] = _ChunkOutcome(index=index, failed=True, error=str(exc))
                 emitter(f"[Audit] 第 {index + 1} 批执行异常：{type(exc).__name__}: {exc}")
     return batch
 
@@ -680,216 +535,6 @@ def _cross_check_candidates(
 
 # ---------------------------------------------------------------- 定向对照
 
-# "结论 / 总结"这类收口章节的标题关键词
-_CONCLUSION_KEYS = ("结论", "总结", "结语", "conclusion", "conclusions", "summary")
-_NUMBER_RE = re.compile(r"\d")
-# 对照材料的大小上限，保证"小对照"真的小
-MAX_COMPARISON_SENTENCES = 40
-MAX_SECTION_TAIL_CHARS = 120
-# 只取到二级标题（"## 3 实验"）：三级小节太碎，每个都取末段会把材料撑大
-MAX_CHAPTER_LEVEL = 2
-# 「强指标词」：出现就几乎可以断定这句在讲结果数值 —— 优先收
-_METRIC_STRONG = (
-    "%",
-    "％",
-    "准确率",
-    "精确率",
-    "精度",
-    "召回",
-    "F1",
-    "ACC",
-    "AUC",
-    "误报",
-    "漏报",
-    "识别率",
-)
-# 「弱指标词」：只是"可能和数值有关" —— 配额不够时先丢这些
-_METRIC_WEAK = (
-    "提升",
-    "下降",
-    "提高",
-    "降低",
-    "达到",
-    "误差",
-    "均值",
-    "平均",
-    "相比",
-    "优于",
-)
-_METRIC_HINTS = _METRIC_STRONG + _METRIC_WEAK
-
-
-def _is_conclusion_span(span: Span) -> bool:
-    section = re.sub(r"[\s#*·]+", "", str(getattr(span, "section", "") or ""))
-    return any(key in section.lower() for key in _CONCLUSION_KEYS)
-
-
-def _render_section_tails(spans: list[Span], *, skip_zones: set[str] | None = None) -> str:
-    """
-    各章的"标题 + 结尾一段"（截断）。
-
-    用于对照"摘要是怎么承诺的、正文到底有没有产出"：
-    章节标题能看出有没有对应的章节，结尾一段能看出这一章到底做了什么。
-
-    两条过滤（都是踩过的坑）：
-
-    - **代码注释不是章节标题**：论文里 `# 将序列切分为两半` 这种 Python 注释
-      会被 spans 当成 Markdown 一级标题，于是每一条注释都变成一个"章"、
-      还各自配一个"末段"。这里只认"以编号或白名单词开头"的真标题。
-    - **表格不当末段**：章节末尾若是表格，整张 Markdown 表会被压成一行塞进材料。
-    """
-
-    skip = skip_zones or set()
-    lines: list[str] = []
-    tail: Span | None = None
-
-    def flush() -> None:
-        nonlocal tail
-        if tail is None:
-            return
-        body = normalize_whitespace(tail.text)
-        if len(body) > MAX_SECTION_TAIL_CHARS:
-            body = body[:MAX_SECTION_TAIL_CHARS] + "…"
-        lines.append(f"[{tail.label}] {body}")
-        tail = None
-
-    def heading_level(text: str) -> int:
-        match = re.match(r"^(#{1,6})\s", str(text or ""))
-        return len(match.group(1)) if match else 99
-
-    for span in spans:
-        if span.zone in skip:
-            continue
-        if span.kind == "heading":
-            if not _is_chapter_heading(span.text):
-                continue  # 代码注释型"标题"：跳过，也不打断当前章
-            flush()
-            lines.append(f"[{span.label}] {span.text}")
-            continue
-        if span.kind == "table":
-            continue  # 表格不当"末段"
-        section = getattr(span, "section", "") or ""
-        if _is_chapter_heading(section) and heading_level(section) <= MAX_CHAPTER_LEVEL:
-            tail = span
-    flush()
-    return "\n".join(lines)
-
-
-# 真章节标题：`# 4 实验设计与实现`、`## 2.2 MoCo对比学习框架`、`# 摘 要`…
-# 而 `# 将序列切分为两半`（Python 注释）不匹配 —— 它没有编号也不是白名单词。
-_CHAPTER_HEAD_RE = re.compile(
-    r"^#{0,6}\s*(?:"
-    r"\d+(?:\.\d+)*"          # 4 / 2.2 / 2.2.1
-    r"|第[一二三四五六七八九十]"
-    r"|摘\s*要|中\s*文\s*摘\s*要|英\s*文\s*摘\s*要|ABSTRACT|Keywords?"
-    r"|目\s*录|Contents"
-    r"|致\s*谢|Acknowledg"
-    r"|参考文献|References?"
-    r"|附\s*录|Appendix"
-    r"|结\s*论|总\s*结|结\s*语|Conclusion"
-    r"|诚\s*信"
-    r")",
-    re.IGNORECASE,
-)
-
-
-def _is_chapter_heading(text: str) -> bool:
-    """这一行（或这一段所属的 section）是不是真的章节标题。"""
-
-    return bool(_CHAPTER_HEAD_RE.match(str(text or "").strip()))
-
-
-def _render_numbered_sentences(
-    spans: list[Span], *, limit: int = MAX_COMPARISON_SENTENCES
-) -> tuple[str, int]:
-    """
-    正文里"含数字"的句子（不含表格）：专门用来和表格里的数值对照。
-
-    返回 ``(文本, 因上限被丢弃的句数)``。
-
-    两档优先级：先收**强指标词**（准确率/召回/F1/误报…）的句子，再收弱指标词
-    （提升/相比/优于…）的。以前是一锅端按出现顺序取前 N 句，结果是
-    "说了一句'优于'的废话"把"准确率 96.67%"这种关键句挤出配额。
-    """
-
-    strong: list[str] = []
-    weak: list[str] = []
-    for span in spans:
-        if span.kind == "table":
-            continue
-        for sentence in span.sentences():
-            if not _NUMBER_RE.search(sentence):
-                continue
-            line = f"[{span.label}] {sentence}"
-            if any(hint in sentence for hint in _METRIC_STRONG):
-                strong.append(line)
-            elif any(hint in sentence for hint in _METRIC_WEAK):
-                weak.append(line)
-
-    ordered = strong + weak
-    # 0 = 不限。注意不能写成 ordered[:0]（那会一句都不取，
-    # 整组「正文数字 × 表格」对照会被静默跳过）。
-    if limit <= 0:
-        return "\n".join(ordered), 0
-    kept = ordered[:limit]
-    dropped = len(ordered) - len(kept)
-    return "\n".join(kept), dropped
-
-
-def _build_comparisons(auditable: list[Span]) -> list[dict[str, Any]]:
-    """
-    要做的定向对照：每一组都是"两份材料 + 只看什么"。
-
-    关键点：材料都很短，而且**把要对照的两份摆在一起**。
-    跨章节矛盾本质是对照任务——两句话隔着上万 token 时，模型两边都记不住。
-    """
-
-    comparisons: list[dict[str, Any]] = []
-    abstract = [span for span in auditable if span.zone == "abstract"]
-    conclusion = [span for span in auditable if _is_conclusion_span(span)]
-
-    if abstract and conclusion:
-        comparisons.append(
-            {
-                "key": "abstract_conclusion",
-                "title": "摘要 × 结论",
-                "focus": "数值、结论强度、方法与数据集数量是否一致",
-                "left": render_annotated(abstract),
-                "right": render_annotated(conclusion),
-            }
-        )
-
-    if abstract:
-        tails = _render_section_tails(auditable, skip_zones={"abstract", "references"})
-        if tails.strip():
-            comparisons.append(
-                {
-                    "key": "promise_outcome",
-                    "title": "摘要的承诺 × 各章产出",
-                    "focus": "摘要里说做了/提出了的东西，各章有没有对应内容",
-                    "left": render_annotated(abstract),
-                    "right": tails,
-                }
-            )
-
-    numbers, dropped_numbers = _render_numbered_sentences(
-        auditable, limit=get_settings().context.audit_compare_sentences
-    )
-    tables = render_annotated([span for span in auditable if span.kind == "table"])
-    if numbers.strip() and tables.strip():
-        comparisons.append(
-            {
-                "key": "numbers_tables",
-                "title": "正文数字 × 表格",
-                "focus": "同一指标、同一组实验的数值是否一致",
-                "left": numbers,
-                "right": tables,
-                # 因 40 句上限被丢掉的句数 —— 必须报出来，不能装作查了全篇
-                "dropped": dropped_numbers,
-            }
-        )
-    return comparisons
-
 
 def _run_targeted_checks(
     comparisons: list[dict[str, Any]],
@@ -983,10 +628,7 @@ def _run_targeted_checks(
             )
             data = parse_json_object(response.text, context="AuditTargeted")
         except Exception as exc:  # noqa: BLE001 - 单组对照失败不影响其它
-            emitter(
-                f"[Audit] 定向对照「{comparison['title']}」失败："
-                f"{type(exc).__name__}: {exc}"
-            )
+            emitter(f"[Audit] 定向对照「{comparison['title']}」失败：{type(exc).__name__}: {exc}")
             return index, [], str(exc)
 
         issues: list[dict[str, Any]] = []
@@ -1136,9 +778,7 @@ def _whole_paper_check(
     return issues, truncated, ""
 
 
-def _variation_issues(
-    naming_hint: list[dict[str, Any]], *, limit: int = 3
-) -> list[dict[str, Any]]:
+def _variation_issues(naming_hint: list[dict[str, Any]], *, limit: int = 3) -> list[dict[str, Any]]:
     """
     把"同一个名称有几种写法"变成**一条 decision 问题**。
 
@@ -1448,18 +1088,16 @@ def run(
             settings=settings,
         )
         raw_issues.extend(extra)
-        cross_meta.update(
-            ran=True, merged=merged_count, added=len(extra), error=error
-        )
+        cross_meta.update(ran=True, merged=merged_count, added=len(extra), error=error)
         if not error:
             emitter(
-                f"[Audit] 跨批对齐完成：合并重复 {merged_count} 条，"
-                f"补充跨批问题 {len(extra)} 条。"
+                f"[Audit] 跨批对齐完成：合并重复 {merged_count} 条，补充跨批问题 {len(extra)} 条。"
             )
 
-    merged = _merge_issues(
-        raw_issues, limit=settings.context.max_issues, start_id=start_id
-    )
+    from app.document.citations import citation_consistency_audit
+
+    raw_issues.extend(citation_consistency_audit(document))
+    merged = _merge_issues(raw_issues, limit=settings.context.max_issues, start_id=start_id)
     # 逐字核对证据 + 合并同类系统性问题 + 按严重程度取舍
     spans_by_id = {span.id: span for span in spans}
     merged, screen_meta = _screen(
@@ -1468,7 +1106,15 @@ def run(
         min_severity=settings.context.audit_min_severity,
         max_issues=settings.context.audit_max_issues,
     )
-    next_issue_counter = start_id + len(merged) - 1 if merged else start_id - 1
+    # Group by meaning, not the wording of two separate paragraph complaints.
+    # This runs before the persisted choice gate, never while replaying an
+    # already-presented pending request (option indexes must remain stable).
+    from app.document.terminology import normalize_terminology_decisions
+
+    merged = normalize_terminology_decisions(
+        merged, document, state.get("user_rules") or [], version=version
+    )
+    next_issue_counter = max((int(i["id"]) for i in merged), default=start_id - 1)
 
     # 用户明确说过“不用改”的问题：标出来，不再进入人工确认与补丁阶段
     rules = state.get("user_rules") or []
@@ -1491,9 +1137,7 @@ def run(
         "chunks_dropped": dropped_chunks,
         "naming_variants": len(naming_hint),
         "name_check": bool(settings.context.audit_name_check),
-        "name_check_found": sum(
-            1 for issue in merged if issue.get("source") == "name_check"
-        ),
+        "name_check_found": sum(1 for issue in merged if issue.get("source") == "name_check"),
         "zones": structure["zones"],
         "skipped_noise": structure["skipped_noise"],
         "budget_stopped": budget_stopped,
@@ -1533,10 +1177,7 @@ def run(
                 f"（已丢弃无法逐字核对 {screen_meta['unverifiable']} 条、"
                 f"低价值 {screen_meta['low_severity']} 条）"
             )
-        log(
-            f"[Audit] 审查完成，得到 {len(merged)} 个问题"
-            f"（{located} 个已定位到段落）{note}。"
-        )
+        log(f"[Audit] 审查完成，得到 {len(merged)} 个问题（{located} 个已定位到段落）{note}。")
 
     return {
         "audit_findings": merged,
@@ -1547,289 +1188,3 @@ def run(
         "issue_counter": max(int(state.get("issue_counter", 0)), next_issue_counter),
         "budget": budget_snapshot or usage(state),
     }
-
-
-def _normalize_issue(
-    item: Any,
-    *,
-    chunk: list[Span],
-    document: str,
-) -> dict[str, Any] | None:
-    """规范化一条问题，并把段落标签解析成稳定 ID。"""
-
-    if not isinstance(item, dict):
-        return None
-
-    problem = str(item.get("problem") or "").strip()
-    if not problem:
-        return None
-
-    category = str(item.get("category") or "").strip()
-    if category not in ISSUE_CATEGORIES:
-        category = "语言表达"
-
-    severity = str(item.get("severity") or "").strip().lower()
-    if severity not in SEVERITIES:
-        severity = "medium"
-
-    # 三类：fix（确实写错，自动改）/ decision（前后冲突，需要作者拍板）/
-    # advice（没写错但可以更好、以及所有代码问题，只写批注）。
-    kind = str(item.get("kind") or "").strip().lower()
-    if kind not in ("fix", "decision", "advice"):
-        kind = "fix"
-
-    # decision 类给出可选项，让作者直接挑一个，不用自己组织语言
-    raw_options = item.get("options") or []
-    options: list[str] = []
-    if isinstance(raw_options, list):
-        for option in raw_options[:4]:
-            text = str(option).strip()
-            if text:
-                options.append(text)
-
-    # 矛盾的另一端：矛盾常常"报在 A、要改 B"（例如报在参数表 T10、要改正文 P183）。
-    # 把另一处的段落 ID 一起带上，Revision 才能把那段正文放进上下文去改。
-    raw_others = item.get("other_labels") or item.get("other") or []
-    if isinstance(raw_others, str):
-        raw_others = [piece.strip() for piece in raw_others.replace("，", ",").split(",")]
-    other_labels: list[str] = []
-    if isinstance(raw_others, list):
-        for label in raw_others[:4]:
-            text = str(label).strip()
-            if text and text not in other_labels:
-                other_labels.append(text)
-
-    # 同一条问题涉及的**全部位置**（"不重复"指只写一条问题，不是只能有一个标号）
-    raw_span_labels = item.get("span_labels") or []
-    if isinstance(raw_span_labels, str):
-        raw_span_labels = [
-            piece.strip() for piece in raw_span_labels.replace("，", ",").split(",")
-        ]
-    span_labels: list[str] = []
-    if isinstance(raw_span_labels, list):
-        for label in raw_span_labels[:60]:
-            text = str(label).strip()
-            if text and text not in span_labels:
-                span_labels.append(text)
-
-    evidence = str(item.get("evidence") or "").strip()
-    label = str(item.get("span_label") or item.get("span_id") or "").strip()
-    span = resolve_span(chunk, span_id=label, label=label)
-
-    # 标签没写对时，退一步：按 evidence 找到它所在的块
-    if span is None and evidence:
-        for candidate in chunk:
-            if evidence and evidence in candidate.text:
-                span = candidate
-                break
-    if span is None and evidence:
-        best, score = None, 0.0
-        for candidate in chunk:
-            current = similarity(candidate.text, evidence)
-            if current > score:
-                best, score = candidate, current
-        if best is not None and score >= 0.6:
-            span = best
-
-    location = str(item.get("location") or "").strip()
-    if not location:
-        location = span.section if span is not None else locate_section(document, evidence)
-
-    issue: dict[str, Any] = {
-        "kind": kind,
-        "options": options if kind == "decision" else [],
-        "other_labels": other_labels if kind == "decision" else [],
-        "span_labels": span_labels,
-        "category": category,
-        "severity": severity,
-        "location": location,
-        "problem": problem,
-        "evidence": evidence,
-        "suggestion": str(item.get("suggestion") or "").strip(),
-        "span_id": span.id if span is not None else "",
-        "span_label": span.label if span is not None else label,
-        "source": "audit",
-    }
-    if span is None:
-        issue["warning"] = "未能定位到具体段落"
-    return issue
-
-
-def _merge_issues(
-    issues: list[dict[str, Any]], *, limit: int = 30, start_id: int = 1
-) -> list[dict[str, Any]]:
-    """合并跨批次的重复问题，按严重程度排序，并统一编号。"""
-
-    merged: list[dict[str, Any]] = []
-    for issue in issues:
-        duplicate = None
-        for existing in merged:
-            if similarity(existing["problem"], issue["problem"]) >= 0.82:
-                duplicate = existing
-                break
-            if (
-                issue.get("evidence")
-                and existing.get("evidence")
-                and similarity(existing["evidence"], issue["evidence"]) >= 0.9
-            ):
-                duplicate = existing
-                break
-
-        if duplicate is None:
-            merged.append(dict(issue))
-            continue
-
-        if SEVERITY_ORDER[issue["severity"]] < SEVERITY_ORDER[duplicate["severity"]]:
-            duplicate["severity"] = issue["severity"]
-        for key in ("suggestion", "evidence", "location", "span_id", "span_label"):
-            if not duplicate.get(key) and issue.get(key):
-                duplicate[key] = issue[key]
-        # 同一条问题在不同地方被报出来时，把**位置并集**：
-        # 全篇审核补充的位置和分块报的位置合到一起，Revision 才不会只改一处。
-        labels: list[str] = []
-        for source in (duplicate, issue):
-            for label in [source.get("span_label")] + list(
-                source.get("span_labels") or []
-            ):
-                text = str(label or "").strip()
-                if text and text not in labels:
-                    labels.append(text)
-        if labels:
-            duplicate["span_labels"] = labels
-
-    merged.sort(key=lambda item: (SEVERITY_ORDER[item["severity"]], item.get("span_id", "")))
-    for position, issue in enumerate(merged[:limit], start=start_id):
-        issue["id"] = position
-        issue["approved"] = False
-    return merged[:limit]
-
-
-def _screen(
-    issues: list[dict[str, Any]],
-    *,
-    spans_by_id: dict[str, Span],
-    min_severity: str = "medium",
-    max_issues: int = 15,
-) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """
-    审查后处理（这一步直接决定"会不会给一篇好论文报一堆问题"）：
-
-    1. **逐字核对证据**：evidence 在对应段落里找不到 → 丢弃（防幻觉/防错位）；
-    2. **同类系统性问题聚合**：同分类且问题描述高度相似的多条 → 合并成一条，
-       并列出涉及的所有段落（"参考文献格式不统一（共 12 处：P581、P582…）"）；
-    3. **严重程度门槛**：默认丢掉 low（可改可不改）；
-    4. **总量上限**：超过上限时按严重程度截断。
-    """
-
-    meta = {
-        "unverifiable": 0,
-        "low_severity": 0,
-        "merged_systematic": 0,
-        "code_skipped": 0,
-    }
-    verified: list[dict[str, Any]] = []
-
-    for issue in issues:
-        span = spans_by_id.get(issue.get("span_id") or "")
-        evidence = (issue.get("evidence") or "").strip()
-        kind = issue.get("kind") or "fix"
-        if span is None:
-            meta["unverifiable"] += 1
-            continue
-        # 代码段不自动改：工具读到的是抽取文本，上下文不全，判断不了代码对错。
-        # 但也不丢——降级成"建议"，只在 Word 里留一条批注给作者看。
-        if looks_like_code(span.text):
-            meta["code_skipped"] += 1
-            issue["kind"] = "advice"
-            kind = "advice"
-        # 建议类不要求逐字引用原文（"建议补充 X 的来源"这种本来就没有可引的句子），
-        # 但仍然要求定位到段落，批注才有地方挂。
-        # 程序生成的条目（术语变体扫描）没有"逐字引用"这种东西——
-        # 它的依据就是扫描结果本身，不该被逐字核对丢掉。
-        if kind != "advice" and issue.get("source") not in (
-            "naming_variants",
-            "consistency",
-        ):
-            if len(evidence) < MIN_EVIDENCE_CHARS:
-                meta["unverifiable"] += 1
-                continue
-            if normalize_whitespace(evidence) not in normalize_whitespace(span.text):
-                meta["unverifiable"] += 1
-                continue
-        verified.append(issue)
-
-    grouped = _merge_systematic(verified, meta)
-
-    threshold = SEVERITY_RANK.get(min_severity, 1)
-    kept = [
-        issue
-        for issue in grouped
-        if SEVERITY_RANK.get(issue.get("severity", "medium"), 1) <= threshold
-    ]
-    meta["low_severity"] = len(grouped) - len(kept)
-
-    kept.sort(key=lambda item: (SEVERITY_RANK.get(item["severity"], 2), item.get("span_label", "")))
-    return kept[:max_issues], meta
-
-
-def _merge_systematic(
-    issues: list[dict[str, Any]], meta: dict[str, int]
-) -> list[dict[str, Any]]:
-    """把"同一类系统性毛病"合并成一条，避免同一个毛病被报 N 次。"""
-
-    groups: list[dict[str, Any]] = []
-    for issue in issues:
-        matched = None
-        for group in groups:
-            if group["category"] != issue["category"]:
-                continue
-            if _same_kind(group["problem"], issue["problem"]):
-                matched = group
-                break
-        if matched is None:
-            item = dict(issue)
-            item["affected_spans"] = [issue.get("span_label")] if issue.get("span_label") else []
-            item["affected_ids"] = [issue.get("id")] if issue.get("id") is not None else []
-            groups.append(item)
-            continue
-
-        if issue.get("span_label") and issue["span_label"] not in matched["affected_spans"]:
-            matched["affected_spans"].append(issue["span_label"])
-        if issue.get("id") is not None:
-            matched["affected_ids"].append(issue["id"])
-        # 保留更严重的等级
-        if SEVERITY_RANK.get(issue["severity"], 2) < SEVERITY_RANK.get(matched["severity"], 2):
-            matched["severity"] = issue["severity"]
-        meta["merged_systematic"] += 1
-
-    for group in groups:
-        if len(group["affected_spans"]) > 1:
-            others = "、".join(group["affected_spans"][1:6])
-            suffix = f"（同类问题共 {len(group['affected_spans'])} 处，另见 {others}）"
-            if suffix not in group["problem"]:
-                group["problem"] = group["problem"].rstrip("。") + suffix
-    return groups
-
-
-def _same_kind(left: str, right: str) -> bool:
-    """
-    两条问题算不算"同一类系统性毛病"。
-
-    只看整体相似度会漏：例如
-      "参考文献格式不统一，缺少出版信息"
-      "参考文献格式不统一，混用了两种著录方式"
-    整体相似度不一定够，但开头完全一样。所以再加一条"共同前缀"判据。
-    """
-
-    left, right = left.strip(), right.strip()
-    if not left or not right:
-        return False
-    if similarity(left, right) >= SYSTEMATIC_SIMILARITY:
-        return True
-
-    common = 0
-    for first, second in zip(left, right):
-        if first != second:
-            break
-        common += 1
-    return common >= 6

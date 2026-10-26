@@ -112,7 +112,9 @@ def _nearest_position(document: str, needle: str, hint: str) -> int:
     return min(positions, key=lambda position: abs(position - hint_index))
 
 
-def _paragraph_candidates(document: str, needle: str, threshold: float = 0.88) -> list[tuple[int, int]]:
+def _paragraph_candidates(
+    document: str, needle: str, threshold: float = 0.88
+) -> list[tuple[int, int]]:
     """段落级模糊匹配，返回原文区间列表。"""
 
     normalized_needle = normalize_for_match(needle)
@@ -249,9 +251,7 @@ def apply_edits(
         location = raw_edit.get("location") or ""
 
         if not isinstance(find, str) or not isinstance(replace, str):
-            result.failed.append(
-                {"issue_id": issue_id, "reason": "invalid_type", "edit": raw_edit}
-            )
+            result.failed.append({"issue_id": issue_id, "reason": "invalid_type", "edit": raw_edit})
             continue
 
         if find.strip() == replace.strip():

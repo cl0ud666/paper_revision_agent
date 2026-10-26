@@ -31,3 +31,28 @@ data/runs/
 # Checkpoint 数据库
 data/checkpoints/
 *.sqlite
+
+# Local configuration and credentials (templates are safe to publish)
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+
+# Local artifacts, uploads, backups and caches
+artifacts/
+data/verification-*/
+*.zip
+*.tgz
+*.sql
+*.sqlite3
+*.db
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+.vscode/
+frontend/blob-report/
+frontend/*.tsbuildinfo

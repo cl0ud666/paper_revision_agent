@@ -274,8 +274,8 @@ class TestRedline(unittest.TestCase):
         self.assertEqual(result.text, expected)
         self.assertEqual(result.text, new_text)
 
-    def test_whole_paragraph_rewrite_with_formula_is_applied(self) -> None:
-        """整段重写（用户明确要重写）可以连公式一起替换，并留下修订痕迹。"""
+    def test_whole_paragraph_rewrite_cannot_destroy_existing_formula(self) -> None:
+        """A plain-text replacement must never erase an existing OMML object."""
 
         spans = build_spans(self.text)
         formula_span = next(span for span in spans if "【公式：" in span.text)
@@ -294,10 +294,10 @@ class TestRedline(unittest.TestCase):
         rounds = [item.to_json() for item in outcome.applied]
 
         result, out_bytes = export(self.data, [rounds])
-        self.assertEqual(len(result.applied), 1, result.skipped)
-        self.assertEqual(result.skipped, [])
-        self.assertEqual(result.text, outcome.document)
-        self.assertIn("<w:del", part(out_bytes, "word/document.xml"))
+        self.assertEqual(len(result.applied), 0)
+        self.assertEqual(len(result.skipped), 1)
+        self.assertEqual(result.text, self.text)
+        self.assertIn("公式受到保护", result.skipped[0]['reason'])
 
     def test_partial_change_reaching_into_formula_is_refused(self) -> None:
         """
@@ -331,8 +331,8 @@ class TestRedline(unittest.TestCase):
         # 写不回的改动会在原地留一条"能照着做"的批注：
         # 这个问题需要人工修改，因为…… / 建议修改为：…… / 原因：……
         comments = part(out_bytes, "word/comments.xml")
-        self.assertIn("这个问题需要人工修改，因为", comments)
-        self.assertIn("建议修改为：", comments)
+        self.assertIn("无法修改，需人工修改", comments)
+        self.assertIn("修改建议：", comments)
         self.assertIn("原因：", comments)
         self.assertIn("定义为交叉熵损失", comments)  # 建议改成什么
         # 摘要里也能看到"哪一条、在哪、原文与建议"
@@ -928,6 +928,59 @@ class TestCitationFields(unittest.TestCase):
 
         self.assertEqual(result.skipped, [])
         self.assertIn("近年来的研究", DocxSource(out_bytes).text)
+
+
+@unittest.skipUnless(HAS_DOCX, "未安装 python-docx / lxml")
+class TestOriginalRevisionBoundaries(unittest.TestCase):
+    def test_term_across_old_insertion_keeps_unedited_revision(self):
+        from app.document.docx_model import w
+        document = Document()
+        paragraph = document.add_paragraph('方法 Mo')
+        insertion = OxmlElement('w:ins')
+        insertion.set(w('author'), '原作者')
+        insertion.set(w('id'), '99')
+        run = OxmlElement('w:r')
+        node = OxmlElement('w:t'); node.text = 'CO 和旧修订保留'
+        run.append(node); insertion.append(run); paragraph._p.append(insertion)
+        paragraph.add_run('。')
+        buffer = io.BytesIO(); document.save(buffer); data = buffer.getvalue()
+        text = DocxSource(data).text
+        _, changes = applied_round(text, label=build_spans(text)[0].label, quote='MoCO', replace='MoCo')
+        result, output = export(data, [changes])
+        self.assertEqual(result.skipped, [])
+        self.assertEqual(DocxSource(output).text, text.replace('MoCO', 'MoCo'))
+        self.assertEqual(result.comments, 1)
+        root = DocxSource(output).document_root
+        old = [n for n in root.iter(w('ins')) if n.get(w('author')) == '原作者']
+        self.assertEqual(''.join(n.text or '' for x in old for n in x.iter(w('t'))), ' 和旧修订保留')
+        self.assertIn('MoCO', ''.join(n.text or '' for n in root.iter(w('delText'))))
+
+    def test_several_text_nodes_in_one_run_do_not_lose_neighbours(self):
+        document = Document(); paragraph = document.add_paragraph()
+        run = paragraph.add_run()._r
+        for value in ['原文 ', 'MoCO', ' 和 ', 'batch', ' 保留尾部']:
+            node = OxmlElement('w:t'); node.text = value; run.append(node)
+        buffer = io.BytesIO(); document.save(buffer); data = buffer.getvalue()
+        text = DocxSource(data).text; label = build_spans(text)[0].label
+        _, one = applied_round(text, label=label, quote='MoCO', replace='MoCo')
+        _, two = applied_round(text, label=label, quote='batch', replace='批次')
+        two[0]['patch_id'] = 'patch-002'
+        result, output = export(data, [one + two])
+        self.assertEqual(result.skipped, [])
+        self.assertEqual(DocxSource(output).text, text.replace('MoCO', 'MoCo').replace('batch', '批次'))
+        self.assertEqual(result.comments, 2)
+
+    def test_one_term_spans_multiple_text_nodes_in_same_run(self):
+        document = Document(); paragraph = document.add_paragraph('方法 ')
+        run = paragraph.add_run()._r
+        for value in ['Mo', 'CO', ' 保留']:
+            node = OxmlElement('w:t'); node.text = value; run.append(node)
+        buffer = io.BytesIO(); document.save(buffer); data = buffer.getvalue()
+        text = DocxSource(data).text
+        _, changes = applied_round(text, label=build_spans(text)[0].label, quote='MoCO', replace='MoCo')
+        result, output = export(data, [changes])
+        self.assertEqual(result.skipped, [])
+        self.assertEqual(DocxSource(output).text, text.replace('MoCO', 'MoCo'))
 
 
 if __name__ == "__main__":

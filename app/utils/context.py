@@ -68,6 +68,7 @@ AGENT_CONTEXT_FIELDS: dict[str, tuple[str, ...]] = {
         "approved_issues",
         "rejected_memory",
         "round_patches",
+        "word_structure",
         "chunk_position",
         "chunk_text",
     ),
@@ -87,6 +88,8 @@ AGENT_CONTEXT_FIELDS: dict[str, tuple[str, ...]] = {
 
 # 字段中文名（拼进 Prompt 时更清楚）
 FIELD_LABELS: dict[str, str] = {
+    "round_patches": "本轮其它批次已提出的改动",
+    "word_structure": "原始 Word 结构与直接格式（空属性表示继承样式，不代表默认值）",
     "user_request": "用户任务",
     "user_rules": "用户要求（跨轮次有效）",
     "ignored_issues": "用户明确不改的问题",
@@ -265,7 +268,9 @@ def _b_last_plan(state: Any, extra: dict[str, Any]) -> str:
     reason = state.get("plan_reason") or ""
     if not plan and not reason:
         return "（无）"
-    return "计划：" + "；".join(str(item) for item in plan) + (f"\n理由：{reason}" if reason else "")
+    return (
+        "计划：" + "；".join(str(item) for item in plan) + (f"\n理由：{reason}" if reason else "")
+    )
 
 
 def _b_focus_areas(state: Any, extra: dict[str, Any]) -> str:
@@ -285,7 +290,9 @@ def _b_chunk_position(state: Any, extra: dict[str, Any]) -> str:
         return "（整篇文档）"
     text = f"第 {int(index) + 1} / {int(total)} 块"
     if labels:
-        text += f"，包含段落 {labels[0]}–{labels[-1]}（共 {len(labels)} 个）"
+        text += (
+            f"，包含段落 {', '.join(labels)}（共 {len(labels)} 个；只包含列出的段落，并非连续范围）"
+        )
     return text
 
 
@@ -312,8 +319,7 @@ def _b_consistency_check(state: Any, extra: dict[str, Any]) -> str:
         return ""
     return (
         "系统已对**全文**做过确定性扫描（不受分批评审的限制），结果如下，"
-        "可以放心作为依据：\n"
-        + hint
+        "可以放心作为依据：\n" + hint
     )
 
 
@@ -381,6 +387,10 @@ def _b_approved_issues(state: Any, extra: dict[str, Any]) -> str:
             "problem": issue.get("problem"),
             "evidence": issue.get("evidence"),
             "suggestion": issue.get("suggestion"),
+            "selected_option": issue.get("selected_option"),
+            "scope_terms": issue.get("scope_terms"),
+            "chunk_target_labels": issue.get("chunk_target_labels") or issue.get("span_labels"),
+            "first_occurrence_labels": issue.get("first_occurrence_labels"),
         }
         compact.append({key: value for key, value in item.items() if value})
     if not compact:
@@ -422,11 +432,7 @@ def _b_ignored_issues(state: Any, extra: dict[str, Any]) -> str:
 
     rules = state.get("user_rules") or []
     text = describe_rules(rules, kinds=("ignore",))
-    findings = [
-        issue
-        for issue in (state.get("audit_findings") or [])
-        if issue.get("ignored")
-    ]
+    findings = [issue for issue in (state.get("audit_findings") or []) if issue.get("ignored")]
     lines: list[str] = []
     if text:
         lines.append(text)
@@ -504,9 +510,7 @@ def _b_patch_decisions(state: Any, extra: dict[str, Any]) -> str:
         raw_status = str(patch.get("status") or "")
         # 优先用补丁自己的状态词：被拒的补丁按原因细分
         # （无法定位 / 定位有歧义 / 无效改动 / 改动冲突），不要再一律叫"无法定位"。
-        status = (
-            patch.get("status_label") or status_hint.get(raw_status) or raw_status
-        )
+        status = patch.get("status_label") or status_hint.get(raw_status) or raw_status
         lines.append(
             f"- {patch.get('patch_id')} [{status}] "
             f"{patch.get('span_label') or patch.get('span_id')}："
@@ -531,6 +535,11 @@ def _b_applied_edits(state: Any, extra: dict[str, Any]) -> str:
             "span": edit.get("span_label") or edit.get("span_id"),
             "original": edit.get("before") or edit.get("original"),
             "revised": edit.get("replace") or edit.get("revised"),
+            "action": edit.get("action", "replace_text"),
+            "params": edit.get("params") or {},
+            "execution": "待最终确认后写回 Word"
+            if edit.get("action", "replace_text") != "replace_text"
+            else "已应用到文本预览",
             "rationale": edit.get("rationale"),
         }
         for edit in edits
@@ -641,12 +650,13 @@ def build_context(
     settings = get_settings()
     extra = extra or {}
     # 用 is None 判断：budget_tokens=0 表示"不限"，不能被 `or` 当成"没传"
-    budget = (
-        settings.context.budget_for(agent) if budget_tokens is None else budget_tokens
-    )
+    budget = settings.context.budget_for(agent) if budget_tokens is None else budget_tokens
 
     fields: dict[str, str] = {}
     for name in AGENT_CONTEXT_FIELDS.get(agent, ()):  # per-agent 白名单
+        if name == "word_structure":
+            fields[name] = json.dumps(extra.get(name) or [], ensure_ascii=False)
+            continue
         builder = _BUILDERS.get(name)
         if builder is None:
             continue
@@ -655,6 +665,29 @@ def build_context(
             continue
         fields[name] = str(value)
 
+    if agent == "revision" and budget > 0:
+        # Never cut a target paragraph out of a cross-section repair. The
+        # revision router already selects text chunks; trim history instead.
+        protected = {
+            "chunk_text",
+            "approved_issues",
+            "user_request",
+            "user_rules",
+            "rejected_memory",
+            "ignored_issues",
+        }
+        required = sum(estimate_tokens(v) for k, v in fields.items() if k in protected)
+        optional = {k: v for k, v in fields.items() if k not in protected}
+        optional = (
+            fit_budget(optional, max(1, budget - required), settings.context.prompt_head_ratio)
+            if required < budget
+            else {}
+        )
+        return {
+            k: (v if k in protected else optional[k])
+            for k, v in fields.items()
+            if k in protected or k in optional
+        }
     return fit_budget(fields, budget, settings.context.prompt_head_ratio)
 
 

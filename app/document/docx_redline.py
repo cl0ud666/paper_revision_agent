@@ -59,9 +59,7 @@ DEFAULT_AUTHOR = "论文修改助手"
 def _utc_now() -> str:
     """Word 习惯的 ISO 时间（带 Z 后缀）。"""
 
-    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _int_or(value: Any, default: int) -> int:
@@ -84,6 +82,7 @@ class RedlineOutcome:
 
     out_path: str = ""
     text: str = ""
+    text_before_structural: str | None = None
     applied: list[dict[str, Any]] = field(default_factory=list)
     skipped: list[dict[str, Any]] = field(default_factory=list)
     changes: int = 0
@@ -204,6 +203,8 @@ def _locate(
         raise Unlocatable("改动落在排版标记上（不是正文文字），无法写回")
     if local_end <= local_start:
         raise Unlocatable("这条改动没有指定要替换的文字")
+    if any(piece.kind == "math" for piece in pieces):
+        raise Unlocatable("原有公式受到保护，不能通过整段文字替换删除；请单独确认公式结构操作")
 
     obstacles = block.obstacles_in(local_start, local_end)
     if obstacles:
@@ -221,20 +222,20 @@ def _locate(
     group = [piece for piece in block.pieces if piece.owner is paragraph]
     # "整段重写"只在段落里没有图片之类的对象时才成立：
     # 否则宁可当成句内替换，把图片原样留在那里。
-    full = (
-        local_start <= group[0].start
-        and local_end >= group[-1].end
-        and not block.obstacles
-    )
+    full = local_start <= group[0].start and local_end >= group[-1].end and not block.obstacles
 
     if not full:
         for piece in pieces:
             if piece.kind != "text" or piece.run is None:
-                raise Unlocatable(
-                    "改动范围里有公式/换行/制表符，只能整段重写，需要人工确认"
-                )
-        if len({id(piece.run) for piece in pieces}) != len(pieces):
-            raise Unlocatable("这一处文字的结构特殊（一段 run 里有多段文字），需要人工处理")
+                raise Unlocatable("改动范围里有公式/换行/制表符，只能整段重写，需要人工确认")
+        parents = set()
+        for piece in pieces:
+            parent = piece.run.getparent()
+            while parent is not None and parent.tag == w("ins"):
+                parent = parent.getparent()
+            parents.add(parent)
+        if len(parents) != 1 or None in parents:
+            raise Unlocatable("改动跨越不同的超链接或文字容器，需要人工处理")
 
     return Change(
         patch=patch,
@@ -512,7 +513,11 @@ class RedlineWriter:
         if comment_id is None:
             return
         for node in list(group["paragraph"].iter()):
-            if node.tag in {w("commentRangeStart"), w("commentRangeEnd"), w("commentReference")} and node.get(w("id")) == str(comment_id):
+            if node.tag in {
+                w("commentRangeStart"),
+                w("commentRangeEnd"),
+                w("commentReference"),
+            } and node.get(w("id")) == str(comment_id):
                 parent = node.getparent()
                 parent.remove(node)
                 if parent.tag == w("r") and len(parent) == 0:
@@ -565,13 +570,24 @@ class RedlineWriter:
         nodes: list[Any] = []
         if paragraph not in self._original_paragraphs:
             pieces = [p for p in change.block.pieces if p.owner is paragraph]
-            original_text = change.block.text[pieces[0].start:pieces[-1].end]
+            original_text = change.block.text[pieces[0].start : pieces[-1].end]
             self._original_paragraphs[paragraph] = (copy.deepcopy(paragraph), original_text)
 
-        previous_group = next((g for g in self._groups if any(
-            n.tag == w("ins") and n in change.first.run.iterancestors()
-            for n in g["nodes"]
-        )), None) if change.first.run is not None else None
+        previous_group = (
+            next(
+                (
+                    g
+                    for g in self._groups
+                    if any(
+                        n.tag == w("ins") and n in change.first.run.iterancestors()
+                        for n in g["nodes"]
+                    )
+                ),
+                None,
+            )
+            if change.first.run is not None
+            else None
+        )
 
         if change.full:
             prior_groups = [g for g in self._groups if g["paragraph"] is paragraph]
@@ -580,7 +596,9 @@ class RedlineWriter:
                 # Build its deletion from the original, never nest old del/ins.
                 original, original_text = self._original_paragraphs[paragraph]
                 for group in prior_groups:
-                    patch["rationale"] = _merge_reasons(group["patch"].get("rationale"), patch.get("rationale"))
+                    patch["rationale"] = _merge_reasons(
+                        group["patch"].get("rationale"), patch.get("rationale")
+                    )
                     self._remove_group_comment(group)
                     self._groups.remove(group)
                 for child in list(paragraph):
@@ -614,7 +632,7 @@ class RedlineWriter:
                 parent.insert(index + 1, insertion)
                 nodes.append(insertion)
         else:
-            runs = [piece.run for piece in change.pieces]
+            runs = list(dict.fromkeys(piece.run for piece in change.pieces))
             parent = runs[0].getparent()
             if parent is None or any(run.getparent() is not parent for run in runs):
                 # 例如一段文字一半在超链接里一半在外面：这种结构不猜
@@ -703,15 +721,19 @@ def applied_rounds(state: Any) -> list[list[dict[str, Any]]]:
     rounds: list[list[dict[str, Any]]] = []
     # 用户在"写入 Word 前最后一次确认"里剔除掉的，不写进副本
     excluded = {str(item) for item in (state.get("excluded_patch_ids") or [])}
+    if state.get("visual_review") and state.get("final_review_ready"):
+        if not state.get("final_review_confirmed"):
+            raise ValueError("最终审阅尚未确认，禁止导出正文修改")
+        return [
+            [dict(p) for p in state.get("final_patches") or [] if p["patch_id"] not in excluded]
+        ]
     for entry in state.get("revision_history") or []:
         if not isinstance(entry, dict):
             continue
         applied = entry.get("applied")
         if entry.get("stage") == "apply" and applied:
             kept = [
-                dict(item)
-                for item in applied
-                if str(item.get("patch_id") or "") not in excluded
+                dict(item) for item in applied if str(item.get("patch_id") or "") not in excluded
             ]
             if kept:
                 rounds.append(kept)
@@ -740,10 +762,12 @@ def _split_run(run: Any, cuts: dict[Any, set[int]]) -> None:
         if child.tag == w("rPr"):
             continue
         if child.tag in {w("t"), w("delText")}:
+            # Separate text nodes (and tabs/drawings) too: a Word run can
+            # contain several children, only one of which is being edited.
+            if segments[-1]:
+                segments.append([])
             text = child.text or ""
-            offsets = sorted(
-                offset for offset in cuts.get(child, set()) if 0 < offset < len(text)
-            )
+            offsets = sorted(offset for offset in cuts.get(child, set()) if 0 < offset < len(text))
             position = 0
             for offset in offsets + [len(text)]:
                 piece_text = text[position:offset]
@@ -755,6 +779,7 @@ def _split_run(run: Any, cuts: dict[Any, set[int]]) -> None:
                 if offset != len(text):
                     segments.append([])
                 position = offset
+            segments.append([])
             continue
         segments[-1].append(copy.deepcopy(child))
 
@@ -766,6 +791,7 @@ def _split_run(run: Any, cuts: dict[Any, set[int]]) -> None:
         if not segment:
             continue
         new_run = _new_element(parent, w("r"))
+        new_run.attrib.update(run.attrib)
         if properties is not None:
             new_run.append(copy.deepcopy(properties))
         for child in segment:
@@ -811,7 +837,7 @@ def _split_for_changes(source: DocxSource, changes: list[Change]) -> None:
                 if piece.kind != "text" or piece.node is None:
                     continue
                 for bound in (change.start, change.end):
-                    if piece.start < bound < piece.end:
+                    if piece.start <= bound <= piece.end:
                         node_cuts.setdefault(piece.node, set()).add(
                             piece.node_offset + (bound - piece.start)
                         )
@@ -829,6 +855,54 @@ def _split_for_changes(source: DocxSource, changes: list[Change]) -> None:
 
         for run, cuts in runs.values():
             _split_run(run, cuts)
+
+
+def _lift_original_insertions(
+    changes: list[Change], source: DocxSource, originals: set[Any]
+) -> None:
+    """Expose only edited runs from pre-existing insertions as baseline text.
+
+    Keep surrounding old revision fragments, hyperlinks and fields intact.
+    Never flatten revisions generated by this export (later rounds merge them).
+    """
+    for change in changes:
+        if change.full:
+            continue
+        pieces = source.blocks[change.block.index].pieces_in(change.start, change.end)
+        parents = set()
+        for piece in pieces:
+            parent = piece.run.getparent() if piece.run is not None else None
+            while parent in originals:
+                parent = parent.getparent()
+            parents.add(parent)
+        if len(parents) != 1 or None in parents:
+            continue  # Real cross-hyperlink/container edits remain unsupported.
+        for piece in pieces:
+            run = piece.run
+            if run is None:
+                continue
+            wrapper = run.getparent()
+            while wrapper in originals and wrapper.getparent() is not None:
+                parent = wrapper.getparent()
+                position = parent.index(wrapper)
+                children = list(wrapper)
+                at = children.index(run)
+                # Split the old insertion around this run. The untouched text
+                # retains its author/date and old revision status.
+                for offset, fragment in enumerate((children[:at], [run], children[at + 1 :])):
+                    if not fragment:
+                        continue
+                    if offset == 1:
+                        parent.insert(position, run)
+                    else:
+                        clone = wrapper.makeelement(wrapper.tag, dict(wrapper.attrib))
+                        for child in fragment:
+                            clone.append(child)
+                        parent.insert(position, clone)
+                        originals.add(clone)
+                    position += 1
+                parent.remove(wrapper)
+                wrapper = run.getparent()
 
 
 def export_redline(
@@ -854,8 +928,73 @@ def export_redline(
 
     outcome = RedlineOutcome(out_path=out_path)
     source = DocxSource(source_data)
+    original_insertions = set(source.document_root.iter(w("ins")))
     writer = RedlineWriter(source, author=author, date=date, comments=comments)
     outcome.warnings.extend(source.warnings)
+
+    # Visual-review advice is anchored to the immutable original BEFORE edits.
+    # Holding XML elements avoids paragraph-label drift after deletions.
+    suggestions = list(suggestions)
+    original_anchors = {}
+    for index, item in enumerate(suggestions):
+        if "original_anchor_start" in item:
+            block = source.block_at(int(item["original_anchor_start"]))
+            original_anchors[index] = (
+                (block.element.find(f".//{w('p')}") if block.kind == "table" else block.element)
+                if block
+                else None
+            )
+
+    # Capture failure anchors before any edits. Every skipped write gets one
+    # comment, including failures after text splitting or replacement.
+    rounds = [list(items) for items in rounds]
+    from hashlib import sha256
+
+    original_checksum = sha256(source_data).hexdigest()
+    verified_rounds = []
+    for items in rounds:
+        verified = []
+        for item in items:
+            if item.get("original_checksum") and item["original_checksum"] != original_checksum:
+                outcome.skipped.append(
+                    {**item, "reason": "原始 Word 校验和与确认版本不同，禁止把补丁写入另一个版本"}
+                )
+            else:
+                verified.append(item)
+        verified_rounds.append(verified)
+    rounds = verified_rounds
+    from app.document.structured import apply_operation, block_for, is_structured
+
+    structured = [item for items in rounds for item in items if is_structured(item)]
+    structure_anchors = {}
+    for item in structured:
+        try:
+            block = block_for(source, item)
+            p = item.get("params") or {}
+            bibliography = (
+                block_for(source, {"span_label": p["bibliography_span_label"]})
+                if p.get("bibliography_span_label")
+                else None
+            )
+            structure_anchors[item["patch_id"]] = (
+                block,
+                bibliography,
+                source.etree.tostring(block.element),
+            )
+        except ValueError as exc:
+            outcome.skipped.append({**item, "reason": str(exc)})
+    rounds = [[item for item in items if not is_structured(item)] for items in rounds]
+    failure_anchors = {}
+    for items in rounds:
+        for item in items:
+            start = item.get("original_start")
+            if start is not None:
+                block = source.block_at(int(start))
+                failure_anchors[item.get("patch_id")] = (
+                    (block.element.find(f".//{w('p')}") if block.kind == "table" else block.element)
+                    if block
+                    else None
+                )
 
     text = source.text
     version = 1
@@ -867,21 +1006,23 @@ def export_redline(
                 change = _locate(dict(item), source=source, spans=spans, text=text)
             except Unlocatable as exc:
                 outcome.skipped.append({**item, "reason": str(exc)})
-                if comments and str(exc) != "代码内容或变量名受到保护，已跳过":
+                if (
+                    str(exc) != "代码内容或变量名受到保护，已跳过"
+                    and item.get("patch_id") not in failure_anchors
+                ):
                     span = resolve_span(
                         spans,
                         span_id=str(item.get("span_id") or ""),
                         label=str(item.get("span_label") or ""),
                     )
-                    writer.note_on_paragraph(
-                        _anchor_paragraph(source, span),
-                        _manual_todo(item, str(exc), span),
-                    )
+                    failure_anchors[item.get("patch_id")] = _anchor_paragraph(source, span)
                 continue
             prepared.append(change)
 
         # 先把 run 按改动边界切开：同一段里的多处改动才不会互相拆掉目标
         _split_for_changes(source, prepared)
+        source.rebuild()
+        _lift_original_insertions(prepared, source, original_insertions)
         source.rebuild()
 
         # 拆 run 不改变文字，所以偏移还有效；这里是按新的结构重新取一遍锚点
@@ -932,20 +1073,56 @@ def export_redline(
         text = source.text
         version += 1
 
-    # 不改正文、只在原地留批注的条目（建议 / 需人工处理）。
+    outcome.text_before_structural = source.text
+    for item in structured:
+        anchor = structure_anchors.get(item["patch_id"])
+        if anchor is None:
+            continue
+        block, bibliography, original_xml = anchor
+        failure_anchors[item["patch_id"]] = (
+            block.element.find(f".//{w('p')}") if block.kind == "table" else block.element
+        )
+        try:
+            if (
+                item["action"] == "table_edit"
+                and source.etree.tostring(block.element) != original_xml
+            ):
+                raise ValueError("该表格已被另一条补丁修改，原始行列坐标可能失效，未覆盖其它修改")
+            apply_operation(writer, item, block, bibliography=bibliography)
+            outcome.applied.append(dict(item))
+        except Exception as exc:
+            outcome.skipped.append({**item, "reason": f"写回失败：{exc}"})
+    source.rebuild()
+
+    # 不改正文、只在原地留批注的条目（无法执行的修改）。
     # 放在所有改动写完之后：这时 source 的偏移已经稳定，锚点不会再变。
     if comments:
-        for item in suggestions:
+        for item in outcome.skipped:
+            paragraph = failure_anchors.get(item.get("patch_id"))
+            if paragraph is None:
+                paragraph = source.document_root.find(f".//{w('p')}")
+            writer.note_on_paragraph(paragraph, _manual_todo(item, item.get("reason", ""), None))
+        for index, item in enumerate(suggestions):
             span = resolve_span(
                 build_spans(source.text, version=1),
                 span_id=str(item.get("span_id") or ""),
                 label=str(item.get("span_label") or ""),
             )
-            paragraph = _anchor_paragraph(source, span)
+            paragraph = (
+                original_anchors[index]
+                if index in original_anchors
+                else _anchor_paragraph(source, span)
+            )
+            if paragraph is None and item.get("kind") == "manual":
+                paragraph = source.document_root.find(f".//{w('p')}")
+                item = {
+                    **item,
+                    "blocked_reason": str(item.get("blocked_reason", ""))
+                    + "；具体位置无法唯一定位，此批注为文首人工待办，原文："
+                    + str(item.get("evidence") or item.get("quote") or item.get("title") or ""),
+                }
             if paragraph is None:
-                outcome.skipped.append(
-                    {**item, "reason": "找不到可挂批注的段落"}
-                )
+                outcome.skipped.append({**item, "reason": "找不到可挂批注的段落"})
                 continue
             writer.note_on_paragraph(paragraph, _suggestion_note(dict(item)))
             outcome.suggestions += 1
@@ -973,8 +1150,7 @@ def _manual_todo(item: dict[str, Any], reason: str, span: Span | None) -> str:
             "blocked_reason": reason,
             "suggestion": str(item.get("replace") or "").strip()
             or ("（删除这段内容）" if item.get("delete") else ""),
-            "reason": str(item.get("rationale") or "").strip()
-            or _before_hint(item),
+            "reason": str(item.get("rationale") or "").strip() or _before_hint(item),
         }
     )
 
@@ -1026,14 +1202,17 @@ def _suggestion_note(item: dict[str, Any]) -> str:
 
     if str(item.get("kind") or "advice") == "manual":
         blocked = str(item.get("blocked_reason") or "").strip() or "工具无法安全地自动改写这一处"
-        lines = [f"这个问题需要人工修改，因为{blocked}。"]
+        lines = ["无法修改，需人工修改。", f"无法修改的原因：{blocked}"]
         if suggestion:
-            lines.append(f"建议修改为：{suggestion[:200]}")
+            lines.append(f"修改建议：{suggestion}")
         if reason:
             lines.append(f"原因：{reason[:300]}")
         return "\n".join(lines)
 
-    lines = [f"此处可以{suggestion}" if suggestion else "此处可以再斟酌一下"]
+    lines = [
+        "修改建议："
+        + (suggestion.removeprefix("修改建议：") if suggestion else "请作者结合上下文核对此处。")
+    ]
     if reason:
         lines.append(f"原因是：{reason[:300]}")
     return "\n".join(lines)

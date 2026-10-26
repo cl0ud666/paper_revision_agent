@@ -15,3 +15,4 @@ redis>=5,<7
 boto3>=1.35,<2
 argon2-cffi>=23.1,<26
 olefile>=0.47,<1
+pdfplumber>=0.11,<0.12

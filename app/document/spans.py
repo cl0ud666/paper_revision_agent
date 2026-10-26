@@ -181,7 +181,12 @@ class _BlockBuilder:
         if kind == "heading":
             self._flush(line_start)
             self.blocks.append(
-                {"kind": "heading", "text": stripped.strip(), "start": line_start, "end": self._offset}
+                {
+                    "kind": "heading",
+                    "text": stripped.strip(),
+                    "start": line_start,
+                    "end": self._offset,
+                }
             )
             return
 
@@ -410,11 +415,7 @@ def select_auditable(spans: Iterable[Span], scope: str = "body") -> list[Span]:
     """按审查范围筛出真正要送给 Audit 的块。"""
 
     allowed = AUDIT_SCOPES.get(scope) or AUDIT_SCOPES["body"]
-    return [
-        span
-        for span in spans
-        if span.zone in allowed and span.auditable
-    ]
+    return [span for span in spans if span.zone in allowed and span.auditable]
 
 
 def structure_report(spans: Iterable[Span]) -> dict[str, Any]:
@@ -432,9 +433,7 @@ def structure_report(spans: Iterable[Span]) -> dict[str, Any]:
         "tables": sum(1 for span in spans if span.kind == "table"),
         "skipped_noise": sum(1 for span in spans if not span.auditable),
         "auditable": sum(
-            1
-            for span in spans
-            if span.auditable and span.zone in {"abstract", "body"}
+            1 for span in spans if span.auditable and span.zone in {"abstract", "body"}
         ),
     }
 
@@ -466,7 +465,11 @@ def resolve_span(
         if wanted is not None:
             for span in spans:
                 current = _split_label(span.label.upper())
-                if current is not None and current[0] == wanted[0] and int(current[1]) == int(wanted[1]):
+                if (
+                    current is not None
+                    and current[0] == wanted[0]
+                    and int(current[1]) == int(wanted[1])
+                ):
                     return span
     return None
 

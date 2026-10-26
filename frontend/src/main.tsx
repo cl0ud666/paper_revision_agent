@@ -6,4 +6,12 @@ import App from './App'
 import './style.css'
 
 const client = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 1000 } } })
-ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><QueryClientProvider client={client}><BrowserRouter><App /></BrowserRouter></QueryClientProvider></React.StrictMode>)
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <QueryClientProvider client={client}>
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </QueryClientProvider>
+  </React.StrictMode>,
+)

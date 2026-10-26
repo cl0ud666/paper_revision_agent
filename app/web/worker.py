@@ -1,30 +1,31 @@
 """每个 Celery 执行片段运行到人工闸门或结束，随后释放 Worker。"""
+
+import logging
+import threading
+import time
 from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
-import threading
-import time
-import logging
 
-from sqlalchemy import select, text
-from celery.exceptions import SoftTimeLimitExceeded
 from botocore.exceptions import ClientError
+from celery.exceptions import SoftTimeLimitExceeded
+from sqlalchemy import select, text
 
 from app.config import get_settings
+from app.document.word_formats import CONVERSION_WARNING, WordFormatError, normalize_word
 from app.state.schema import initial_state
-from app.utils.call_policy import install_policy
 from app.utils.budget import BudgetExceeded
-from app.utils.text import estimate_tokens
-from app.utils.rules import apply_payload, rule_texts
+from app.utils.call_policy import install_policy
 from app.utils.loaders import load_bytes
-from app.document.word_formats import normalize_word, WordFormatError, CONVERSION_WARNING
+from app.utils.rules import apply_payload, rule_texts
+from app.utils.text import estimate_tokens
 from app.utils.tracing import reset_recorders, utc_now
-from app.workflow.harness import Harness, RunResult
-from app.web.db import engine, transaction, reset_engines
-from app.web.models import Run, Job, now, new_id
+from app.web.db import engine, transaction
+from app.web.models import Job, Run, new_id, now
+from app.web.queue import acquire_llm_slot, celery_app, release_llm_slot
 from app.web.service import event
-from app.web.queue import celery_app, acquire_llm_slot, release_llm_slot
-from app.web.storage import store, DOCX_MIME
+from app.web.storage import DOCX_MIME, store
+from app.workflow.harness import Harness, RunResult
 
 _test_locks = {}
 _test_locks_guard = threading.Lock()
@@ -44,13 +45,17 @@ def exclusive_run(run_id):
                 lock.release()
         return
     with engine().connect() as conn:
-        acquired = conn.scalar(text("SELECT pg_try_advisory_lock(hashtextextended(:id, 0))"), {"id": run_id})
+        acquired = conn.scalar(
+            text("SELECT pg_try_advisory_lock(hashtextextended(:id, 0))"), {"id": run_id}
+        )
         conn.commit()
         try:
             yield acquired
         finally:
             if acquired:
-                conn.execute(text("SELECT pg_advisory_unlock(hashtextextended(:id, 0))"), {"id": run_id})
+                conn.execute(
+                    text("SELECT pg_advisory_unlock(hashtextextended(:id, 0))"), {"id": run_id}
+                )
                 conn.commit()
 
 
@@ -75,10 +80,17 @@ class WebCallPolicy:
                 if run.status in {"cancel_requested", "cancelled"}:
                     raise RuntimeError("用户已取消任务")
                 if run.used_tokens + run.reserved_tokens + amount > run.token_limit:
-                    raise BudgetExceeded("本任务模型额度已用尽", {"exceeded": True, "reason": "本任务模型额度已用尽"})
+                    raise BudgetExceeded(
+                        "本任务模型额度已用尽", {"exceeded": True, "reason": "本任务模型额度已用尽"}
+                    )
                 run.reserved_tokens += amount
                 run.stage = agent
-                messages = {"audit": "正在检查论文", "revision": "正在生成修改", "review": "正在复核修改", "orchestrator": "正在分析任务"}
+                messages = {
+                    "audit": "正在检查论文",
+                    "revision": "正在生成修改",
+                    "review": "正在复核修改",
+                    "orchestrator": "正在分析任务",
+                }
                 event(db, run, "progress", messages.get(agent, "正在处理"))
             return amount, slot
         except BaseException:
@@ -105,7 +117,11 @@ def heartbeat(job_id, policy, stop):
         try:
             with transaction() as db:
                 job = db.get(Job, job_id)
-                if job is None or job.status != "running" or job.execution_token != policy.execution_token:
+                if (
+                    job is None
+                    or job.status != "running"
+                    or job.execution_token != policy.execution_token
+                ):
                     return
                 job.lease_until = now() + timedelta(seconds=90)
                 run = db.get(Run, job.run_id)
@@ -116,9 +132,14 @@ def heartbeat(job_id, policy, stop):
 
 
 def _initial_input(run, document, source):
-    state = initial_state(run.request, document, run_id=run.id, max_iterations=get_settings().workflow.max_iterations)
+    state = initial_state(
+        run.request, document, run_id=run.id, max_iterations=get_settings().workflow.max_iterations
+    )
     state["source_docx"] = str(source)
-    state["turns"] = [{"turn": 1, "instruction": run.request, "created_at": utc_now(), "summary": ""}]
+    state["visual_review"] = True
+    state["turns"] = [
+        {"turn": 1, "instruction": run.request, "created_at": utc_now(), "summary": ""}
+    ]
     state["conversation"] = [{"turn": 1, "role": "user", "content": run.request}]
     rules, _ = apply_payload([], {"rules": run.rules}, turn=1, source="start")
     state["user_rules"], state["human_constraints"] = rules, rule_texts(rules)
@@ -132,7 +153,11 @@ def drive_workflow(run, job, harness):
     try:
         source_data = store().get(normalized_key)
     except (FileNotFoundError, ClientError) as exc:
-        if isinstance(exc, ClientError) and exc.response.get("Error", {}).get("Code") not in {"NoSuchKey", "404", "NotFound"}:
+        if isinstance(exc, ClientError) and exc.response.get("Error", {}).get("Code") not in {
+            "NoSuchKey",
+            "404",
+            "NotFound",
+        }:
             raise
         source_data, _ = normalize_word(store().get(run.source_key), run.document_name)
         store().put(normalized_key, source_data, DOCX_MIME)
@@ -150,14 +175,18 @@ def drive_workflow(run, job, harness):
         if not loaded.can_write_back:
             raise RuntimeError("文档无法生成修订版，请检查文档或安装完整 Word 依赖")
         initial = _initial_input(run, loaded.text, source)
-        initial["input_warnings"] = ([] if run.document_name.lower().endswith(".docx") else [CONVERSION_WARNING])
+        initial["input_warnings"] = (
+            [] if run.document_name.lower().endswith(".docx") else [CONVERSION_WARNING]
+        )
         return harness._invoke(initial)
     pending = harness.current_pending_request()
     if pending:
         if job.action == "resume" and pending == job.payload.get("request"):
             return harness.resume(job.payload["answer"])
         # 先前的片段已执行成功但业务回写前崩溃：发布真正的新闸门，禁止重复回答。
-        return RunResult(run.id, harness.thread_id, "interrupted", state=state, interrupts=[pending])
+        return RunResult(
+            run.id, harness.thread_id, "interrupted", state=state, interrupts=[pending]
+        )
     if snapshot.next:
         return harness._invoke(None)
     return RunResult(run.id, harness.thread_id, "completed", state=state)
@@ -177,7 +206,12 @@ def execute_job(job_id, harness_factory=Harness):
             job = db.get(Job, job_id)
             if job.status in {"done", "failed"}:
                 return
-            if run.version != job.version or run.status in {"completed", "cancelled", "failed", "waiting_user"}:
+            if run.version != job.version or run.status in {
+                "completed",
+                "cancelled",
+                "failed",
+                "waiting_user",
+            }:
                 job.status, job.lease_until = "done", None
                 return
             if run.status == "cancel_requested":
@@ -185,7 +219,11 @@ def execute_job(job_id, harness_factory=Harness):
                 event(db, run, "cancelled", "任务已取消")
                 return
             if job.attempts >= 3:
-                run.status, job.status, run.error = "failed", "failed", "后台任务多次中断，请点击重试"
+                run.status, job.status, run.error = (
+                    "failed",
+                    "failed",
+                    "后台任务多次中断，请点击重试",
+                )
                 event(db, run, "failed", run.error)
                 return
             # 前一个进程死亡后遗留的额度预留按保守用量结算。
@@ -208,6 +246,20 @@ def execute_job(job_id, harness_factory=Harness):
                 result = drive_workflow(run, job, harness)
             if result.status == "failed":
                 raise RuntimeError(result.error or "Workflow 执行失败")
+            preview = result.state.get("preview_manifest") or {}
+            if preview.get("pages"):
+                cache = get_settings().paths.run_dir(run.id) / "preview" / preview["fingerprint"]
+                for page in preview["pages"]:
+                    name = f"page-{page['number']}.png"
+                    key = (
+                        f"users/{run.user_id}/runs/{run.id}/preview/{preview['fingerprint']}/{name}"
+                    )
+                    if (cache / name).is_file():
+                        store().put(key, (cache / name).read_bytes(), "image/png")
+                    else:
+                        # A resumed job may run on another worker. The frozen
+                        # preview was uploaded before publishing its gate.
+                        store().get(key)
             result_key = report_key = None
             if result.status == "completed":
                 state = result.state
@@ -217,12 +269,14 @@ def execute_job(job_id, harness_factory=Harness):
                 if target and target.exists():
                     document = target.read_bytes()
                 elif not state.get("applied_patches") or not any(
-                    p.get("patch_id") not in state.get("excluded_patch_ids", []) for p in state.get("applied_patches", [])
+                    p.get("patch_id") not in state.get("excluded_patch_ids", [])
+                    for p in state.get("applied_patches", [])
                 ):
                     document = store().get(run.source_key + ".normalized.docx")
                 else:
                     raise RuntimeError("未生成有效的 Word 修订文件，请重试")
                 from app.agents.report import build_report
+
                 report = result.final_report or build_report(state)
                 prefix = f"users/{run.user_id}/runs/{run_id}"
                 result_key, report_key = f"{prefix}/revised.docx", f"{prefix}/report.md"
@@ -248,22 +302,58 @@ def execute_job(job_id, harness_factory=Harness):
                     current.result_key, current.report_key = result_key, report_key
                     current.pending_id, current.pending_request = None, {}
                     event(db, current, "completed", "处理完成，可以下载修订版和报告")
-                current.state_summary = {"review": result.review_status,
-                    "changes": len(result.state.get("applied_patches") or []),
+                from app.document.review_items import location_map, readable
+
+                locations = location_map(
+                    result.state.get("current_document") or result.state.get("original_document")
+                )
+                current.state_summary = {
+                    "review": result.review_status,
+                    "changes": len(
+                        (
+                            result.state.get("final_patches")
+                            if result.state.get("visual_review")
+                            else result.state.get("applied_patches")
+                        )
+                        or []
+                    ),
                     "excluded": len(result.state.get("excluded_patch_ids") or []),
                     "issues": len(result.state.get("audit_findings") or []),
-                    "review_summary": (result.state.get("review_result") or {}).get("summary", ""),
-                    "warnings": list(result.state.get("input_warnings") or []) + list(result.state.get("errors") or [])}
+                    "review_summary": readable(
+                        (result.state.get("review_result") or {}).get("summary", ""), locations
+                    ),
+                    "warnings": list(result.state.get("input_warnings") or [])
+                    + list(result.state.get("errors") or []),
+                    "unfinished": result.state.get("unfinished_items") or [],
+                    "reviewed_patch_ids": [
+                        p["patch_id"] for p in result.state.get("final_patches") or []
+                    ],
+                    "reviewed_manual_ids": [
+                        m["manual_id"] for m in result.state.get("final_manual_items") or []
+                    ],
+                    "preview": preview,
+                    "written": (result.state.get("redline_summary") or {}).get("applied", 0),
+                }
         except (Exception, SoftTimeLimitExceeded) as exc:
             logging.exception("Paper job %s failed", job_id)
             with transaction() as db:
                 current = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
                 if db.get(Job, job_id).execution_token != policy.execution_token:
                     return
-                current.status = "cancelled" if current.status in {"cancel_requested", "cancelled"} else "failed"
+                current.status = (
+                    "cancelled" if current.status in {"cancel_requested", "cancelled"} else "failed"
+                )
                 current.stage = current.status
                 current.processing_seconds = int(policy.elapsed_seconds())
-                current.error = (str(exc) if isinstance(exc, WordFormatError) else "后台处理失败，可从保存的位置重试。") if current.status == "failed" else ""
+                current.error = (
+                    (
+                        str(exc)
+                        if isinstance(exc, WordFormatError)
+                        else "后台处理失败，可从保存的位置重试。"
+                    )
+                    if current.status == "failed"
+                    else ""
+                )
                 db.get(Job, job_id).status = "failed"
                 event(db, current, current.status, current.error or "任务已取消")
         finally:
@@ -274,7 +364,9 @@ def execute_job(job_id, harness_factory=Harness):
 @celery_app.task(name="paper.execute")
 def execute(job_id):
     import os
+
     if os.getenv("PRA_WEB_DEMO", "0") == "1":
         from app.web.demo import install_demo
+
         install_demo()
     execute_job(job_id)

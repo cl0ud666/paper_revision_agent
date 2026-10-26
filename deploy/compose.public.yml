@@ -1,0 +1,35 @@
+# Optional HTTPS edge. Use only after setting PRA_DOMAIN and DNS.
+services:
+  web:
+    networks:
+      default:
+      ingress:
+        ipv4_address: 172.29.251.3
+    volumes:
+      - ./trusted-proxy.conf:/etc/nginx/trusted-proxies/edge.conf:ro
+  edge:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      PRA_DOMAIN: ${PRA_DOMAIN:?Set your domain before public deployment}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      ingress:
+        ipv4_address: 172.29.251.2
+    depends_on:
+      web:
+        condition: service_started
+networks:
+  ingress:
+    ipam:
+      config:
+        - subnet: 172.29.251.0/24
+volumes:
+  caddy-data:
+  caddy-config:

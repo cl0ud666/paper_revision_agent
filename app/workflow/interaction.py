@@ -26,6 +26,8 @@ def prepare_response(request: dict[str, Any], payload: dict[str, Any]) -> dict[s
     if not isinstance(payload, dict):
         raise ValueError("人工回答必须是 JSON 对象")
     data = deepcopy(payload)
+    # Reconstruct decision records only from the frozen server request.
+    data.pop("selected_decisions", None)
     for field in ("turn", "iteration"):
         if field in request:
             if data.get(field) is not None and data[field] != request[field]:
@@ -33,10 +35,11 @@ def prepare_response(request: dict[str, Any], payload: dict[str, Any]) -> dict[s
             data[field] = request[field]
     if kind == "issue_review" and "choices" in data:
         issues = {str(issue["id"]): issue for issue in request.get("issues", [])}
-        choices = data.pop("choices")
+        choices = data["choices"]
         if not isinstance(choices, dict):
             raise ValueError("choices 必须为 {issue_id: option_index} 对象")
         rules = list(data.get("rules") or [])
+        decisions = []
         for issue_id, index in choices.items():
             issue = issues.get(str(issue_id))
             if issue is None or not isinstance(index, int) or isinstance(index, bool):
@@ -45,24 +48,46 @@ def prepare_response(request: dict[str, Any], payload: dict[str, Any]) -> dict[s
             if not 0 <= index < len(options):
                 raise ValueError("选项索引超出范围")
             where = issue.get("span_label") or issue.get("location") or f"问题 {issue_id}"
-            rules.append(f"{where}：{options[index]}")
+            rule = f"{where}：{options[index]}"
+            if rule not in rules:
+                rules.append(rule)
+            from app.document.review_items import manual_reason
+
+            decisions.append(
+                {
+                    "issue_id": issue["id"],
+                    "option_index": index,
+                    "selected_option": options[index],
+                    "problem": issue.get("problem", ""),
+                    "evidence": issue.get("evidence", ""),
+                    "span_label": issue.get("span_label", ""),
+                    "manual_reason": manual_reason(options[index]),
+                }
+            )
         data["rules"] = rules
+        data["selected_decisions"] = decisions
         ignored = list(data.get("ignore_ids") or [])
         # 明确未作选择的条目可以保留；有自由规则时由规则决定处理范围。
         if not data.get("rules"):
             ignored.extend(issue["id"] for issue in issues.values())
         elif not payload.get("rules"):
-            ignored.extend(issue["id"] for key, issue in issues.items() if key not in {str(k) for k in choices})
+            ignored.extend(
+                issue["id"] for key, issue in issues.items() if key not in {str(k) for k in choices}
+            )
         data["ignore_ids"] = list(dict.fromkeys(ignored))
     if kind == "final_confirm" and not data.get("exclude_all"):
         patches = request.get("patches") or []
         members = {
-            str(patch.get("patch_id")): [str(i) for i in patch.get("patch_ids") or [patch.get("patch_id")]]
+            str(patch.get("patch_id")): [
+                str(i) for i in patch.get("patch_ids") or [patch.get("patch_id")]
+            ]
             for patch in patches
         }
         allowed = {member for values in members.values() for member in values}
         by_number = {str(i): str(patch.get("patch_id")) for i, patch in enumerate(patches, 1)}
-        raw = data.get("excluded_ids", data.get("numbers", request.get("defaults", {}).get("excluded_ids", [])))
+        raw = data.get(
+            "excluded_ids", data.get("numbers", request.get("defaults", {}).get("excluded_ids", []))
+        )
         if isinstance(raw, str):
             raw = [s.strip() for s in raw.replace("，", ",").split(",") if s.strip()]
         if not isinstance(raw, list):

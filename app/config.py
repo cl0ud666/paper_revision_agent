@@ -26,8 +26,19 @@ def validate_run_id(run_id: str) -> str:
     """运行 ID 同时用作目录名，只允许单个安全路径组件。"""
     if not isinstance(run_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", run_id):
         raise ValueError("run_id 必须为 1–128 位字母、数字、下划线、连字符或点，且以字母数字开头")
-    reserved = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
-    if run_id.endswith(".") or run_id.split(".")[0].upper() in reserved or run_id.lower() == "evals":
+    reserved = {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{i}" for i in range(1, 10)),
+        *(f"LPT{i}" for i in range(1, 10)),
+    }
+    if (
+        run_id.endswith(".")
+        or run_id.split(".")[0].upper() in reserved
+        or run_id.lower() == "evals"
+    ):
         raise ValueError("run_id 不能使用保留目录名")
     return run_id
 

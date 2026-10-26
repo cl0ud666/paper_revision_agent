@@ -1,6 +1,8 @@
 # 网页版启动与部署
 
-已实现邀请制账号、Word 类文件上传、后台任务、术语选择、最终确认和 Word/报告下载。
+已实现账号密码自行注册、Word 类文件上传、后台任务、术语选择、最终确认和 Word 下载。网页不提供修改报告入口；报告仍作为内部诊断产物保留。
+当前方案：每账号累计 3 次免费机会，暂不收费、不接手机号验证。
+从零购买资源及发布请看 [上线步骤](public_launch.md)。
 前端为 React + TypeScript + Vite；API 为 FastAPI；Celery 使用同步 prefork Worker。
 PostgreSQL 同时保存业务表和 LangGraph Checkpoint；Redis 用作 Broker 和全局模型限流。
 所有下载都经过用户归属校验，文件桶不公开。
@@ -22,14 +24,17 @@ docker compose --env-file deploy/.env -f deploy/compose.yml up --build -d
 管理员账号和初始密码在 `deploy/.env` 的 `PRA_ADMIN_USERNAME`、`PRA_ADMIN_PASSWORD`。
 
 访问 http://localhost:8080 。默认只绑定本机回环地址。
-登录后进入“内测账号”创建成员账号、调整额度和停用账号。
+新用户可在登录页自行注册；管理员可在“用户管理”创建账号、调整每日限制和停用账号。
 忘记密码时由服务器管理员执行以下命令，交互输入新密码；该账号的旧会话会被撤销：
 
 ```powershell
 docker compose --env-file deploy/.env -f deploy/compose.yml exec api python -m app.web.manage reset-password 账号名
 ```
 
-默认每个账号每日 5 个任务（按 UTC+8 日期计数），每篇 400,000 token；额度可调整。
+默认每账号累计 3 次免费机会，排队/运行/等待选择占用机会，成功完成后计入已使用；失败或取消释放。
+重试会重新原子检查剩余次数；取消请求尚未执行完毕时仍占用。历史内测任务不占新额度。
+另有每日 5 次提交的防滥用限制（按 UTC+8 日期计数），失败/取消不会重置每日提交次数。
+模型内部每篇预算默认 400,000 token，只在服务端管理，网页和用户报告不显示其数量。
 模型调用会先按预估预留额度，成功后按实际返回的用量结算；未返回用量或异常时按保守预留量结算。
 等待人工选择不计入后台处理时限。
 
@@ -90,7 +95,9 @@ Word 的原生替换仍由删除和插入两个修订组成，显示多少气泡
 
 Worker 获取论文级 PostgreSQL advisory lock 后执行，重复投递不会重复修改论文。
 每个执行片段还带 execution_token，旧执行不能覆盖新执行的业务状态和额度。
-模型调用也受 Redis 全局并发名额约束，默认最多 6 个同时调用。
+Compose 默认 5 个 Celery 执行进程，每个审查任务内部最多 3 路，全局最多 15 个模型调用。
+分别用 `PRA_WORKER_CONCURRENCY`、`PRA_AUDIT_CONCURRENCY`、`PRA_LLM_CONCURRENCY` 配置。
+等待人工选择不占 Worker 执行进程。5 人可同时处理；超出执行名额的任务排队，不会互相覆盖。
 
 遇到人工请求时，Worker 将完整 pending_request 和请求 ID 原样写入数据库，随后结束该片段。
 用户回答经过身份、归属、请求 ID、版本和选项校验；回答与新的恢复 job 在同一个事务中保存。
@@ -135,6 +142,13 @@ Windows 上优先使用已安装的 Edge；其他环境可执行 `npx playwright
 可用 `PRA_E2E_URL` 和 `PRA_E2E_BROWSER_CHANNEL` 指定目标地址和浏览器。
 
 ## 运维
+
+### 分页最终确认
+
+新建网页任务启用原稿分页审阅，最多“口径选择 + 最终确认”两次交互。镜像需包含
+LibreOffice Writer、中文字体和 `requirements-web.txt` 中的 `pdfplumber`。
+预览存入私有对象存储，由带登录权限校验的页面接口读取；不会暴露文件桶。
+升级前的已创建任务保留原协议，新体验需新建任务。详细行为、边界和验收见 [visual_review.md](visual_review.md)。
 
 ```powershell
 docker compose --env-file deploy/.env -f deploy/compose.yml ps

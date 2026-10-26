@@ -174,6 +174,7 @@ def looks_like_code(text: str) -> bool:
     # Word 里的一段程序清单也可能只有连续赋值/函数调用，没有 def/for。
     return assignment_count >= 2
 
+
 _HEADING_PATTERNS = (
     re.compile(r"^#{1,6}\s+\S"),
     re.compile(r"^第\s*\d+\s*[章节部分]"),

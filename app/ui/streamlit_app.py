@@ -93,9 +93,7 @@ def sidebar(settings) -> dict:
 
     st.sidebar.header("运行参数")
     config = describe_configuration()
-    st.sidebar.caption(
-        f"模型：{config['model']}｜API Key：{config['api_key'] or '未配置'}"
-    )
+    st.sidebar.caption(f"模型：{config['model']}｜API Key：{config['api_key'] or '未配置'}")
 
     max_iterations = st.sidebar.number_input(
         "最大修改轮次",
@@ -118,9 +116,7 @@ def sidebar(settings) -> dict:
     return {
         "max_iterations": int(max_iterations),
         "auto_approve": auto_approve,
-        "constraints": [
-            line.strip() for line in constraints_text.splitlines() if line.strip()
-        ],
+        "constraints": [line.strip() for line in constraints_text.splitlines() if line.strip()],
     }
 
 
@@ -263,7 +259,8 @@ def show_issue_decisions(request: dict) -> dict | None:
         st.markdown(f"**{issue.get('problem', '')}**")
         options = issue.get("options") or []
         selection = st.radio(
-            "请选择处理方式", options=[-1, *range(len(options))],
+            "请选择处理方式",
+            options=[-1, *range(len(options))],
             format_func=lambda i, options=options: "先不修改" if i == -1 else options[i],
             key=f"{prefix}:choice:{issue['id']}",
         )
@@ -271,13 +268,18 @@ def show_issue_decisions(request: dict) -> dict | None:
             choices[str(issue["id"])] = selection
     rules_text = st.text_area("补充判断 / 额外要求（每行一条）", key=f"{prefix}:rules")
     if st.button("确认选择并继续", key=f"{prefix}:submit", type="primary"):
-        return {"choices": choices, "rules": [line.strip() for line in rules_text.splitlines() if line.strip()]}
+        return {
+            "choices": choices,
+            "rules": [line.strip() for line in rules_text.splitlines() if line.strip()],
+        }
     return None
 
 
 def _show_patch_details(patches: list[dict]) -> None:
     for patch in patches:
-        st.markdown(f"**[{patch.get('patch_id')}] {patch.get('position') or patch.get('span_label') or '全文'}**")
+        st.markdown(
+            f"**[{patch.get('patch_id')}] {patch.get('position') or patch.get('span_label') or '全文'}**"
+        )
         if patch.get("problem"):
             st.caption(patch["problem"])
         st.write("原文：", patch.get("before") or patch.get("quote") or "（插入）")
@@ -295,7 +297,12 @@ def show_patch_review(request: dict) -> dict | None:
     patches = request.get("patches") or []
     _show_patch_details(patches)
     by_id = {p["patch_id"]: p for p in patches if p.get("status") == "proposed"}
-    selected = st.multiselect("接受哪些修改", options=list(by_id), default=list(by_id), key=f"{request.get('run_id')}:{request.get('iteration')}:patches")
+    selected = st.multiselect(
+        "接受哪些修改",
+        options=list(by_id),
+        default=list(by_id),
+        key=f"{request.get('run_id')}:{request.get('iteration')}:patches",
+    )
     if st.button("确认修改并继续", type="primary"):
         return {"accepted_ids": selected}
     return None
@@ -308,8 +315,17 @@ def show_final_confirm(request: dict) -> dict | None:
     _show_patch_details(patches)
     previous = set(request.get("defaults", {}).get("excluded_ids") or [])
     options = [p["patch_id"] for p in patches]
-    default = [p["patch_id"] for p in patches if set(p.get("patch_ids") or [p["patch_id"]]).issubset(previous)]
-    excluded = st.multiselect("剔除哪些修改（不选则全部写入）", options=options, default=default, key=f"{request.get('run_id')}:{request.get('turn')}:excluded")
+    default = [
+        p["patch_id"]
+        for p in patches
+        if set(p.get("patch_ids") or [p["patch_id"]]).issubset(previous)
+    ]
+    excluded = st.multiselect(
+        "剔除哪些修改（不选则全部写入）",
+        options=options,
+        default=default,
+        key=f"{request.get('run_id')}:{request.get('turn')}:excluded",
+    )
     if st.button("确认并生成文件", type="primary"):
         return {"excluded_ids": excluded}
     if st.button("全部不写入"):
@@ -318,12 +334,15 @@ def show_final_confirm(request: dict) -> dict | None:
 
 
 def show_request(request: dict) -> dict | None:
-    return dispatch_request(request, {
-        "issue_review": show_issue_decisions,
-        "patch_review": show_patch_review,
-        "final_confirm": show_final_confirm,
-        "human_approval": show_issues,
-    })
+    return dispatch_request(
+        request,
+        {
+            "issue_review": show_issue_decisions,
+            "patch_review": show_patch_review,
+            "final_confirm": show_final_confirm,
+            "human_approval": show_issues,
+        },
+    )
 
 
 def launch_run(harness: Harness, options: dict, request: str, document: str, source_docx: str):
@@ -341,7 +360,9 @@ def show_results(result) -> None:
     columns[0].metric("Review 结论", (result.review_status or "未执行").upper())
     columns[1].metric("修改轮次", state.get("iteration", 0))
     columns[2].metric("落实修改", len(state.get("revision_edits") or []))
-    columns[3].metric("剩余问题", len((state.get("review_result") or {}).get("remaining_issues") or []))
+    columns[3].metric(
+        "剩余问题", len((state.get("review_result") or {}).get("remaining_issues") or [])
+    )
 
     tab_report, tab_document, tab_diff, tab_trace = st.tabs(
         ["报告", "修改后论文", "修改对照", "运行观测"]
@@ -379,9 +400,7 @@ def show_results(result) -> None:
                     "（多与公式、图片或跨单元格有关），已在文档原位留批注。"
                 )
                 with st.expander("看看是哪几条、该怎么手工改", expanded=True):
-                    for item in (state.get("redline_summary") or {}).get(
-                        "skipped_items"
-                    ) or []:
+                    for item in (state.get("redline_summary") or {}).get("skipped_items") or []:
                         position = item.get("position") or item.get("location") or ""
                         location = item.get("location") or ""
                         if location and location not in str(position):
@@ -456,7 +475,9 @@ def main() -> None:
         )
         st.session_state["harness"] = harness
         with st.spinner("正在理解任务并规划执行路径..."):
-            st.session_state["result"] = launch_run(harness, options, request, document, st.session_state.get("source_docx", ""))
+            st.session_state["result"] = launch_run(
+                harness, options, request, document, st.session_state.get("source_docx", "")
+            )
         st.rerun()
 
     result = st.session_state.get("result")

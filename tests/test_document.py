@@ -165,7 +165,7 @@ class TestPatchValidation(unittest.TestCase):
     def test_empty_replace_is_conflict(self) -> None:
         patch = self.make(quote="效果比较好", replace="   ", rationale="r")
         self.assertEqual(patch.status, STATUS_CONFLICT)
-        self.assertIn("为空", patch.conflict_reason)
+        self.assertIn("未生成具体的替换内容", patch.conflict_reason)
 
     def test_duplicate_quote_inside_span_is_conflict_but_cross_span_is_fine(self) -> None:
         text = (

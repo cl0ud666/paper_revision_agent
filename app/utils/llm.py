@@ -81,9 +81,7 @@ def get_chat_model(
 
     settings = get_settings()
     json_mode = settings.llm.json_mode if json_mode is None else json_mode
-    temperature = (
-        settings.agents.temperature_for(agent) if temperature is None else temperature
-    )
+    temperature = settings.agents.temperature_for(agent) if temperature is None else temperature
     max_tokens = settings.llm.max_tokens if max_tokens is None else max_tokens
 
     with _FACTORY_LOCK:
@@ -199,7 +197,11 @@ def call_llm(
     )
 
     policy = get_policy(run_id)
-    reservation = policy.reserve(agent, prompt, system or "", max_tokens or get_settings().llm.max_tokens) if policy else None
+    reservation = (
+        policy.reserve(agent, prompt, system or "", max_tokens or get_settings().llm.max_tokens)
+        if policy
+        else None
+    )
     response = None
 
     try:
@@ -287,7 +289,7 @@ def ping(timeout: float | None = None) -> LLMResponse:
     """
 
     return call_llm(
-        "请只输出 JSON：{\"ok\": true}",
+        '请只输出 JSON：{"ok": true}',
         agent="review",
         json_mode=True,
         max_tokens=32,

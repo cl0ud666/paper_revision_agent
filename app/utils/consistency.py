@@ -24,14 +24,18 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-from app.utils.text import normalize_whitespace
+from app.utils.text import looks_like_code
 
 # 术语级替换的长度上限（超过就当成句子改写，不做一致性检查）
 MAX_TERM_CHARS = 20
 
 _RULE_PATTERNS = (
-    re.compile(r"把\s*[「\"'“]?([^」\"'”\s，,。；;]{1,20})[」\"'”]?\s*(?:统一)?(?:写成|改成|改为|替换为|用)\s*[「\"'“]?([^」\"'”\s，,。；;]{1,20})"),
-    re.compile(r"[「\"'“]?([^」\"'”\s，,。；;]{1,20})[」\"'”]?\s*(?:→|->|=>)\s*[「\"'“]?([^」\"'”\s，,。；;]{1,20})"),
+    re.compile(
+        r"把\s*[「\"'“]?([^」\"'”\s，,。；;]{1,20})[」\"'”]?\s*(?:统一)?(?:写成|改成|改为|替换为|用)\s*[「\"'“]?([^」\"'”\s，,。；;]{1,20})"
+    ),
+    re.compile(
+        r"[「\"'“]?([^」\"'”\s，,。；;]{1,20})[」\"'”]?\s*(?:→|->|=>)\s*[「\"'“]?([^」\"'”\s，,。；;]{1,20})"
+    ),
 )
 
 
@@ -107,12 +111,23 @@ def find_inconsistencies(
         for span in span_list:
             text = getattr(span, "text", "")
             label = getattr(span, "label", "")
+            if looks_like_code(text):
+                continue
+            text = re.sub(r"`[^`]+`|[A-Za-z_]\w*_[A-Za-z_]\w*", "", text)
             if label in fixed:
                 continue
             if old in text and new not in text:
                 hits.append(label)
 
-        total = document.count(old)
+        total = (
+            sum(
+                re.sub(r"`[^`]+`|[A-Za-z_]\w*_[A-Za-z_]\w*", "", getattr(s, "text", "")).count(old)
+                for s in span_list
+                if not looks_like_code(getattr(s, "text", ""))
+            )
+            if span_list
+            else document.count(old)
+        )
         if hits or total:
             seen.add(key)
             issues.append(
@@ -189,6 +204,9 @@ def find_naming_variants(
     forms: dict[str, dict[str, list[str]]] = {}
     for span in spans:
         text = getattr(span, "text", "") or ""
+        if looks_like_code(text):
+            continue
+        text = re.sub(r"`[^`]+`|[A-Za-z_]\w*_[A-Za-z_]\w*", "", text)
         label = str(getattr(span, "label", "") or "")
         for token in _LATIN_TOKEN_RE.findall(text):
             forms.setdefault(_name_key(token), {}).setdefault(token, []).append(label)
@@ -291,9 +309,7 @@ def find_structure_damage(spans: Iterable[Any]) -> list[dict[str, Any]]:
 def describe_structure_damage(items: Iterable[dict[str, Any]]) -> str:
     """转成报告 / Prompt 用的文字。"""
 
-    return "\n".join(
-        f"- {item['label']}：{item['reason']}（{item['text']}）" for item in items
-    )
+    return "\n".join(f"- {item['label']}：{item['reason']}（{item['text']}）" for item in items)
 
 
 # ---------------------------------------------------------------- 专有名词清单
@@ -301,13 +317,71 @@ def describe_structure_damage(items: Iterable[dict[str, Any]]) -> str:
 # 通用词与排版词：不算"论文里提到的方法或数据集"，避免误报
 _NAME_STOPWORDS = frozenset(
     {
-        "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X",
-        "A", "AN", "THE", "AND", "OR", "OF", "IN", "ON", "TO", "FOR", "WITH", "USING",
-        "WE", "OUR", "THIS", "THAT", "THESE", "THOSE", "IT", "IS", "ARE", "WAS",
-        "TABLE", "TABLES", "FIG", "FIGS", "FIGURE", "FIGURES", "EQ", "EQS",
-        "EQUATION", "SECTION", "SECTIONS", "CHAPTER", "APPENDIX", "REF", "REFS",
-        "REFERENCE", "REFERENCES", "DOI", "URL", "HTTP", "HTTPS", "PDF", "DOCX",
-        "TXT", "CSV", "XML", "JSON", "OK", "VS", "ET", "AL", "IE", "EG",
+        "I",
+        "II",
+        "III",
+        "IV",
+        "V",
+        "VI",
+        "VII",
+        "VIII",
+        "IX",
+        "X",
+        "A",
+        "AN",
+        "THE",
+        "AND",
+        "OR",
+        "OF",
+        "IN",
+        "ON",
+        "TO",
+        "FOR",
+        "WITH",
+        "USING",
+        "WE",
+        "OUR",
+        "THIS",
+        "THAT",
+        "THESE",
+        "THOSE",
+        "IT",
+        "IS",
+        "ARE",
+        "WAS",
+        "TABLE",
+        "TABLES",
+        "FIG",
+        "FIGS",
+        "FIGURE",
+        "FIGURES",
+        "EQ",
+        "EQS",
+        "EQUATION",
+        "SECTION",
+        "SECTIONS",
+        "CHAPTER",
+        "APPENDIX",
+        "REF",
+        "REFS",
+        "REFERENCE",
+        "REFERENCES",
+        "DOI",
+        "URL",
+        "HTTP",
+        "HTTPS",
+        "PDF",
+        "DOCX",
+        "TXT",
+        "CSV",
+        "XML",
+        "JSON",
+        "OK",
+        "VS",
+        "ET",
+        "AL",
+        "IE",
+        "EG",
     }
 )
 
@@ -474,9 +548,7 @@ def find_near_miss_names(
             if not _edit_distance_is_one(first.upper(), second.upper()):
                 continue
             stat_a, stat_b = stats[first], stats[second]
-            rare, common = (
-                (stat_a, stat_b) if stat_a.count <= stat_b.count else (stat_b, stat_a)
-            )
+            rare, common = (stat_a, stat_b) if stat_a.count <= stat_b.count else (stat_b, stat_a)
             # 只提示"罕见写法"：出现一次的可疑写法 + 出现多次的常见写法
             if rare.count > 1 or common.count < 2:
                 continue

@@ -21,13 +21,12 @@
 
 from __future__ import annotations
 
-import time
 from datetime import datetime, timezone
 from typing import Any
 
 from app.config import get_settings
-from app.utils.tracing import get_recorder, utc_now
 from app.utils.call_policy import get_policy
+from app.utils.tracing import get_recorder, utc_now
 
 
 class BudgetExceeded(RuntimeError):

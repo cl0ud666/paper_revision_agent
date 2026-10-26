@@ -15,6 +15,7 @@ LLM 不可用时，会退化为确定性的规则规划（保证 Workflow 不会
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 from app.agents.prompts import ORCHESTRATOR_SYSTEM, render_orchestrator_prompt
@@ -55,6 +56,32 @@ DIRECT_REVISION_HINTS = (
 )
 
 DEFAULT_FOCUS_AREAS = tuple(ISSUE_CATEGORIES[:6])
+
+
+def requests_full_review(request):
+    """Formatting constraints do not cancel an explicit comprehensive review."""
+    text = str(request or "")
+    if re.search(r"(?:不用|无需|不要|不需要)(?:全面|全文|整体)?(?:检查|审查|审阅)", text):
+        return False
+    return bool(
+        re.search(
+            r"(?:全面|全文|整体|系统性).{0,6}(?:检查|审查|审阅|校订|修改)|full review|proofread",
+            text,
+            re.I,
+        )
+    )
+
+
+def requires_initial_audit(state):
+    return (
+        bool((state.get("current_document") or "").strip())
+        and not int(state.get("iteration", 0))
+        and not state.get("audit_meta")
+        and not state.get("audit_findings")
+        and not state.get("audit_failed")
+        and not (state.get("budget") or {}).get("exceeded")
+        and requests_full_review(state.get("user_request"))
+    )
 
 
 def plan(
@@ -137,6 +164,19 @@ def _normalize(
     has_document = bool((state.get("current_document") or "").strip())
     if not has_document:
         next_action = "report"
+    if not is_replan and requires_initial_audit(state):
+        log(
+            "[Orchestrator] 保留用户的全面检查要求，明确格式要求作为附加任务，不能缩减为仅修改格式。"
+        )
+        return {
+            **_result(
+                "audit",
+                "用户明确要求全面检查，同时执行附加修改要求。",
+                _default_steps("audit"),
+                kind="full_review",
+            ),
+            "next_instructions": state["user_request"],
+        }
 
     plan_kind = str(data.get("plan_kind") or "").strip()
     if plan_kind not in {"full_review", "direct_revision", "replan"}:
@@ -191,6 +231,16 @@ def fallback_plan(state: Any) -> dict[str, Any]:
 
     if not document:
         return _result("report", "论文内容为空，无法执行修改。", ["直接输出报告"])
+    if requires_initial_audit(state):
+        return {
+            **_result(
+                "audit",
+                "用户要求全面检查并执行附加修改要求。",
+                _default_steps("audit"),
+                kind="full_review",
+            ),
+            "next_instructions": request,
+        }
 
     # ---------- Review FAIL 之后的重新规划 ----------
     if review_result and iteration > 0:
@@ -259,8 +309,7 @@ def _result(
     kind: str | None = None,
 ) -> dict[str, Any]:
     return {
-        "plan_kind": kind
-        or ("full_review" if next_action == "audit" else "direct_revision"),
+        "plan_kind": kind or ("full_review" if next_action == "audit" else "direct_revision"),
         "next_action": next_action,
         "plan": steps,
         "plan_reason": reason,

@@ -1,0 +1,14 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["artifacts", "data", ".venv"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

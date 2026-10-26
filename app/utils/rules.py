@@ -57,11 +57,7 @@ def next_rule_id(rules: Iterable[dict[str, Any]]) -> str:
 
 
 def active_rules(rules: Iterable[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    return [
-        rule
-        for rule in (rules or [])
-        if rule.get("status", STATUS_ACTIVE) == STATUS_ACTIVE
-    ]
+    return [rule for rule in (rules or []) if rule.get("status", STATUS_ACTIVE) == STATUS_ACTIVE]
 
 
 def rule_texts(rules: Iterable[dict[str, Any]] | None) -> list[str]:
@@ -152,9 +148,7 @@ def issue_signature(issue: dict[str, Any]) -> dict[str, Any]:
         "span_label": str(issue.get("span_label") or ""),
         "spans": [
             str(label)
-            for label in (
-                [issue.get("span_label")] + list(issue.get("affected_spans") or [])
-            )
+            for label in ([issue.get("span_label")] + list(issue.get("affected_spans") or []))
             if label
         ],
         "category": str(issue.get("category") or ""),
@@ -163,7 +157,9 @@ def issue_signature(issue: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def revoke_rule(rules: list[dict[str, Any]], rule_id: str, *, turn: int = 1) -> list[dict[str, Any]]:
+def revoke_rule(
+    rules: list[dict[str, Any]], rule_id: str, *, turn: int = 1
+) -> list[dict[str, Any]]:
     """撤销一条（用户改主意了）。"""
 
     target = str(rule_id or "").strip().upper()
@@ -241,7 +237,9 @@ def is_ignored(issue: dict[str, Any], rules: Iterable[dict[str, Any]] | None) ->
             and stored["category"] == signature["category"]
         )
 
-        if same_label and (same_category or not stored.get("category") or not signature.get("category")):
+        if same_label and (
+            same_category or not stored.get("category") or not signature.get("category")
+        ):
             return True
 
         if same_label and stored.get("evidence") and signature.get("evidence"):
@@ -258,14 +256,12 @@ def is_ignored(issue: dict[str, Any], rules: Iterable[dict[str, Any]] | None) ->
     return False
 
 
-def describe(rules: Iterable[dict[str, Any]] | None, *, kinds: tuple[str, ...] | None = None) -> str:
+def describe(
+    rules: Iterable[dict[str, Any]] | None, *, kinds: tuple[str, ...] | None = None
+) -> str:
     """给 Prompt 用的文本（带编号，方便用户按编号改）。"""
 
-    items = [
-        rule
-        for rule in active_rules(rules)
-        if kinds is None or rule.get("kind") in kinds
-    ]
+    items = [rule for rule in active_rules(rules) if kinds is None or rule.get("kind") in kinds]
     if not items:
         return ""
     lines = []
@@ -311,7 +307,9 @@ def apply_payload(
     # 2) 撤销
     raw_revoke = payload.get("revoke") or payload.get("revoke_ids")
     if isinstance(raw_revoke, str):
-        raw_revoke = [piece.strip() for piece in raw_revoke.replace("，", ",").split(",") if piece.strip()]
+        raw_revoke = [
+            piece.strip() for piece in raw_revoke.replace("，", ",").split(",") if piece.strip()
+        ]
     for rule_id in raw_revoke or []:
         rules = revoke_rule(rules, str(rule_id), turn=turn)
 
@@ -330,7 +328,9 @@ def apply_payload(
         selected = issue_list
     elif isinstance(ignore_ids, str):
         wanted = {
-            int(piece) for piece in ignore_ids.replace("，", ",").split(",") if piece.strip().isdigit()
+            int(piece)
+            for piece in ignore_ids.replace("，", ",").split(",")
+            if piece.strip().isdigit()
         }
         selected = [issue for issue in issue_list if issue.get("id") in wanted]
     elif isinstance(ignore_ids, (list, tuple, set)):
@@ -339,9 +339,7 @@ def apply_payload(
 
     note = str(payload.get("note") or "").strip()
     if selected:
-        rules, ignored = ignore_issues(
-            rules, selected, turn=turn, source=source, note=note
-        )
+        rules, ignored = ignore_issues(rules, selected, turn=turn, source=source, note=note)
         created.extend(ignored)
         # 顺便把问题本身标记出来，报告里能看到“按用户要求忽略”
         for issue in selected:

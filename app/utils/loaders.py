@@ -219,9 +219,9 @@ def _docx_text_python_docx(data: bytes) -> str:
     """用 python-docx 按文档顺序提取段落与表格。"""
 
     from docx import Document  # type: ignore
+    from docx.oxml.ns import qn  # type: ignore
     from docx.table import Table  # type: ignore
     from docx.text.paragraph import Paragraph  # type: ignore
-    from docx.oxml.ns import qn  # type: ignore
 
     document = Document(io.BytesIO(data))
     lines: list[str] = []
@@ -272,9 +272,7 @@ def _paragraph_text_with_math(paragraph: Any) -> str:
         if tag == f"{_W_NS}t":
             parts.append(node.text or "")
         elif tag in {f"{_M_NS}oMath", f"{_M_NS}oMathPara"}:
-            math_text = "".join(
-                child.text or "" for child in node.iter(f"{_M_NS}t")
-            ).strip()
+            math_text = "".join(child.text or "" for child in node.iter(f"{_M_NS}t")).strip()
             if math_text:
                 parts.append(f"【公式：{math_text}】")
     if not parts:
@@ -392,14 +390,11 @@ def _load_pdf(data: bytes, filename: str) -> LoadedDocument:
                 "或把论文另存为 .docx / .txt 再上传。"
             )
         raise DocumentLoadError(
-            "这个 PDF 没有提取到文字（多半是扫描版），需要先做 OCR，"
-            "或直接上传 .docx 版本。"
+            "这个 PDF 没有提取到文字（多半是扫描版），需要先做 OCR，或直接上传 .docx 版本。"
         )
 
     if engine:
-        warnings.append(
-            "PDF 提取可能丢失公式、表格与分栏版式；关键段落建议核对原文。"
-        )
+        warnings.append("PDF 提取可能丢失公式、表格与分栏版式；关键段落建议核对原文。")
     if len(text) < 200:
         warnings.append("提取到的文字很少，可能是扫描件或图片型 PDF。")
 

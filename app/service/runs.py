@@ -19,9 +19,9 @@
 from __future__ import annotations
 
 import json
-import threading
 import os
 import tempfile
+import threading
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -172,9 +172,7 @@ class RunSession:
 
         with self._lock:
             if self.status != STATUS_AWAITING:
-                raise RunStateError(
-                    f"任务状态为 {self.status}，当前没有等待人工确认的环节"
-                )
+                raise RunStateError(f"任务状态为 {self.status}，当前没有等待人工确认的环节")
             payload = prepare_response(self.pending, payload)
             approved = payload.get("approved_issue_ids")
             count = len(approved) if isinstance(approved, list) else "全部"
@@ -248,9 +246,7 @@ class RunSession:
                 with self._lock:
                     self._release_slot(generation)
 
-        self._thread = threading.Thread(
-            target=runner, name=f"run-{self.run_id}", daemon=True
-        )
+        self._thread = threading.Thread(target=runner, name=f"run-{self.run_id}", daemon=True)
         try:
             self._save()
             self._thread.start()
@@ -600,7 +596,9 @@ class RunSession:
     def _save(self) -> None:
         self._write_session(self.status, self.stage, self.error)
 
-    def _write_session(self, status: str, stage: str, error: str, *, pending: dict | None = None) -> None:
+    def _write_session(
+        self, status: str, stage: str, error: str, *, pending: dict | None = None
+    ) -> None:
         if not self.persistent:
             return
         payload = {
@@ -613,7 +611,9 @@ class RunSession:
             "updated_at": self.updated_at,
             "finished_at": self.finished_at,
             "options": self.options.to_json(),
-            "pending_request": deepcopy(pending if pending is not None else self.pending) if status == STATUS_AWAITING else {},
+            "pending_request": deepcopy(pending if pending is not None else self.pending)
+            if status == STATUS_AWAITING
+            else {},
         }
         try:
             self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -639,7 +639,11 @@ class RunManager:
 
     def __init__(self, *, max_concurrent: int | None = None) -> None:
         self.settings = get_settings()
-        self.max_concurrent = max_concurrent if max_concurrent is not None else self.settings.server.max_concurrent_runs
+        self.max_concurrent = (
+            max_concurrent
+            if max_concurrent is not None
+            else self.settings.server.max_concurrent_runs
+        )
         if self.max_concurrent < 1:
             raise ValueError("max_concurrent 必须大于 0")
         self._limiter = threading.BoundedSemaphore(self.max_concurrent)
@@ -700,7 +704,9 @@ class RunManager:
         if not runs_dir.exists():
             return items
 
-        directories = [path for path in runs_dir.iterdir() if path.is_dir() and path.name != "evals"]
+        directories = [
+            path for path in runs_dir.iterdir() if path.is_dir() and path.name != "evals"
+        ]
         directories.sort(key=lambda path: path.stat().st_mtime, reverse=True)
 
         for path in directories[:limit]:
@@ -774,7 +780,9 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     """同目录临时文件 + 原子替换，读者不会看到半个 JSON。"""
     temp_path = None
     try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, suffix=".tmp", delete=False) as handle:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, suffix=".tmp", delete=False
+        ) as handle:
             temp_path = Path(handle.name)
             json.dump(payload, handle, ensure_ascii=False, indent=2, default=str)
             handle.flush()
@@ -822,9 +830,7 @@ def _compact_issues(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return compact
 
 
-def _compact_edits(
-    edits: list[dict[str, Any]], *, failed: bool = False
-) -> list[dict[str, Any]]:
+def _compact_edits(edits: list[dict[str, Any]], *, failed: bool = False) -> list[dict[str, Any]]:
     compact: list[dict[str, Any]] = []
     for edit in edits:
         item: dict[str, Any] = {

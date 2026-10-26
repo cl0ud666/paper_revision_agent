@@ -13,3 +13,15 @@ data/runs
 data/checkpoints
 data/web-storage
 data/verification-temp
+artifacts
+data/verification-*
+**/.env.*
+**/*.pem
+**/*.key
+**/*.zip
+**/*.tgz
+**/*.sql
+.ruff_cache
+.coverage
+frontend/playwright-report
+frontend/blob-report

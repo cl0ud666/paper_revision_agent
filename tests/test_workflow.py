@@ -320,6 +320,7 @@ class TestDecisionGate(WorkflowTestCase):
                             "category": "实验分析",
                             "severity": "high",
                             "problem": "温度系数在正文与参数表中不一致",
+                            "options": ["全文温度系数以 0.07 为准", "全文温度系数以 0.09 为准"],
                             "evidence": ISSUE_SENTENCE,
                             "suggestion": "请作者确认以哪一处为准",
                         }

@@ -45,7 +45,7 @@ CONFLICT_TEXT = {
     "not_found": "该段落中找不到要替换的原文片段",
     "ambiguous": "要替换的片段在该段落中出现多次，无法判断改哪一处",
     "no_span": "找不到目标段落",
-    "empty_replace": "修改后的内容为空（如果要删除内容，请把 delete 设为 true）",
+    "empty_replace": "未生成具体的替换内容，已保留原文",
     "no_change": "修改前后内容相同（无效改动）",
     "overlap": "与同一段落的另一条补丁重叠",
     "code_protected": "代码内容或变量名受到保护，不会由工具修改",
@@ -72,8 +72,11 @@ _CODE_IDENTIFIER_RE = re.compile(r"(?<![A-Za-z0-9_])[A-Za-z_]\w*_[A-Za-z_]\w*(?!
 
 def changes_code(before: str, after: str, span_text: str) -> bool:
     """代码段不修改；正文中引用的 snake_case/常量名也必须逐字保留。"""
-    return looks_like_code(span_text) or Counter(_CODE_IDENTIFIER_RE.findall(before)) != Counter(
-        _CODE_IDENTIFIER_RE.findall(after)
+    return (
+        looks_like_code(span_text)
+        or Counter(_CODE_IDENTIFIER_RE.findall(before))
+        != Counter(_CODE_IDENTIFIER_RE.findall(after))
+        or Counter(re.findall(r"`[^`]+`", before)) != Counter(re.findall(r"`[^`]+`", after))
     )
 
 
@@ -86,6 +89,8 @@ class Patch:
     span_label: str = ""
     issue_id: Any = None
     target: str = "span"  # span / sentence
+    action: str = "replace_text"
+    params: dict[str, Any] = field(default_factory=dict)
     quote: str = ""
     replace: str = ""
     rationale: str = ""
@@ -111,6 +116,8 @@ class Patch:
     decided_at: str = ""
     applied_at: str = ""
     span_id_after: str = ""
+    source_patch_ids: list[str] = field(default_factory=list)
+    issue_ids: list[Any] = field(default_factory=list)
 
     # ---------- 展示辅助 ----------
 
@@ -148,9 +155,7 @@ class Patch:
         """
 
         if self.status == STATUS_CONFLICT:
-            return CONFLICT_LABELS.get(
-                self.conflict_code, STATUS_LABELS[STATUS_CONFLICT]
-            )
+            return CONFLICT_LABELS.get(self.conflict_code, STATUS_LABELS[STATUS_CONFLICT])
         return STATUS_LABELS.get(self.status, self.status)
 
     def to_json(self) -> dict[str, Any]:
@@ -196,7 +201,9 @@ def patch_from_model(
         label=str(_pick(item, "span_label", "label", "paragraph", "location", default="")).strip(),
     )
 
-    quote = str(_pick(item, "quote", "find", "original", "before", "target_text", default="") or "").strip()
+    quote = str(
+        _pick(item, "quote", "find", "original", "before", "target_text", default="") or ""
+    ).strip()
     target = str(_pick(item, "target", "scope", default="span") or "span").strip().lower()
 
     raw_replace = _pick(item, "replace", "revised", "after", "new_text", default=None)
@@ -208,12 +215,22 @@ def patch_from_model(
     patch = Patch(
         patch_id=patch_id,
         span_id=span.id if span else str(_pick(item, "span_id", "block_id", default="")).strip(),
-        span_label=span.label if span else str(_pick(item, "span_label", "label", default="")).strip(),
+        span_label=span.label
+        if span
+        else str(_pick(item, "span_label", "label", default="")).strip(),
         issue_id=_pick(item, "issue_id", "issue", default=None),
         target="sentence" if target.startswith("sent") or target.startswith("句") else "span",
+        action=(
+            str(item.get("action") or "replace_text")
+            if item.get("action") not in {"delete", "remove", "删除"}
+            else "replace_text"
+        ),
+        params=item.get("params") if isinstance(item.get("params"), dict) else {},
         quote=quote,
         replace=replace,
-        rationale=str(_pick(item, "rationale", "reason", "why", "explanation", default="") or "").strip(),
+        rationale=str(
+            _pick(item, "rationale", "reason", "why", "explanation", default="") or ""
+        ).strip(),
         category=str(_pick(item, "category", default=(issue or {}).get("category", "")) or ""),
         severity=str(_pick(item, "severity", default=(issue or {}).get("severity", "")) or ""),
         round=int(round_number),
@@ -247,6 +264,27 @@ def validate_patch(patch: Patch, spans: Iterable[Span]) -> Patch:
     patch.span_id = span.id
     patch.span_label = span.label
 
+    if patch.action != "replace_text":
+        from app.document.structured import describe_operation, validate_operation
+
+        try:
+            validate_operation(patch.action, patch.params)
+            quote = patch.quote or span.text
+            if span.kind == "heading":
+                quote = re.sub(r"^#{1,6}\s+", "", quote)
+            start, end, strategy = locate_unique(span.text, quote)
+            if start < 0:
+                return _conflict(patch, strategy)
+            patch.before = span.text[start:end]
+            patch.quote = patch.before
+            patch.start_in_span, patch.end_in_span = start, end
+            patch.replace = describe_operation(patch.action, patch.params)
+            patch.strategy = "structured"
+            patch.status = STATUS_PROPOSED
+            return patch
+        except (ValueError, TypeError) as exc:
+            return _conflict(patch, str(exc))
+
     # 排版标记（### / - / |）不是正文：模型抄进来的、自己加的，一律剥掉
     normalize_structure_markers(patch, span)
 
@@ -262,7 +300,9 @@ def validate_patch(patch: Patch, spans: Iterable[Span]) -> Patch:
 
     quote = (patch.quote or "").strip()
     if not quote:
-        if not patch.delete and normalize_whitespace(span.text) == normalize_whitespace(patch.replace):
+        if not patch.delete and normalize_whitespace(span.text) == normalize_whitespace(
+            patch.replace
+        ):
             return _conflict(patch, "no_change")
         if changes_code(span.text, patch.replace, span.text):
             return _conflict(patch, "code_protected")
@@ -281,6 +321,32 @@ def validate_patch(patch: Patch, spans: Iterable[Span]) -> Patch:
     # 注意：这里用“严格唯一”定位——同一段落里出现多次时判定为歧义，
     # 而不是随便挑第一处（那是 find_span 的行为，不适合落盘修改）。
     start, end, strategy = locate_unique(span.text, quote)
+    if start < 0 and patch.replace and not patch.delete:
+        # A model may drop a letter while copying a case-only correction
+        # (MoC -> MoCo although the source says MoCO). Recover only when the
+        # requested result already matches one actual range ignoring case,
+        # and the misquote differs solely by one Latin character.
+        from difflib import SequenceMatcher
+
+        candidates = list(re.finditer(re.escape(patch.replace), span.text, re.I))
+        if len(candidates) == 1:
+            actual = candidates[0].group()
+            differences = [
+                (quote[a:b], actual[c:d])
+                for op, a, b, c, d in SequenceMatcher(
+                    None, quote.casefold(), actual.casefold(), autojunk=False
+                ).get_opcodes()
+                if op != "equal"
+            ]
+            if (
+                differences
+                and sum(max(len(a), len(b)) for a, b in differences) == 1
+                and all(re.fullmatch(r"[A-Za-z]*", a + b) for a, b in differences)
+            ):
+                quote = patch.quote = actual
+                if actual == patch.replace:
+                    return _conflict(patch, "no_change")
+                start, end, strategy = candidates[0].start(), candidates[0].end(), "source-case"
     if start < 0:
         return _conflict(patch, strategy if strategy in CONFLICT_TEXT else "not_found")
     if changes_code(span.text[start:end], patch.replace, span.text):
@@ -355,9 +421,7 @@ def normalize_structure_markers(patch: Patch, span: Span) -> Patch:
         marker = _leading_marker(replace)
         if marker:
             patch.replace = replace[len(marker) :]
-            patch.warnings.append(
-                "已去掉“修改后”开头的排版标记（标题层级由文档结构保留）"
-            )
+            patch.warnings.append("已去掉“修改后”开头的排版标记（标题层级由文档结构保留）")
         replace = patch.replace
 
     if span.kind == "table" and replace:
@@ -426,6 +490,148 @@ class ApplyOutcome:
     spans_after: list[Span] = field(default_factory=list)
 
 
+def coalesce_compatible_patches(patches: Iterable[Patch], spans: Iterable[Span]) -> list[Patch]:
+    """Merge overlapping *compatible* edits, preserving their provenance.
+
+    Compare actual character edits, not the quoted context windows. An LLM
+    sentence replacement and a deterministic spelling replacement may describe
+    exactly the same edit. Different choices on the same characters are never
+    resolved by ordering, and rejected patches never participate in a merge.
+    """
+    from dataclasses import replace
+    from difflib import SequenceMatcher
+
+    spans = list(spans)
+    result: list[Patch] = []
+
+    def operations(patch):
+        edits = [
+            (patch.start_in_span + a, patch.start_in_span + b, patch.replace[c:d])
+            for tag, a, b, c, d in SequenceMatcher(
+                None, patch.before, patch.replace, autojunk=False
+            ).get_opcodes()
+            if tag != "equal"
+        ]
+        # A spelling is one choice, not independent character choices:
+        # MoCO→MoCo and MoCO→MOCO must NOT combine into a third spelling MOCo.
+        windows = []
+        for a, b, _ in edits:
+            lo, hi = a, b
+            for word in re.finditer(r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*", span.text):
+                if max(a, word.start()) < min(b, word.end()) or (
+                    a == b and word.start() < a < word.end()
+                ):
+                    lo, hi = min(lo, word.start()), max(hi, word.end())
+            if windows and lo < windows[-1][1]:
+                windows[-1] = (windows[-1][0], max(hi, windows[-1][1]))
+            else:
+                windows.append((lo, hi))
+        result = []
+        for lo, hi in windows:
+            after = span.text[lo:hi]
+            for a, b, replacement in reversed(edits):
+                if lo <= a and b <= hi:
+                    after = after[: a - lo] + replacement + after[b - lo :]
+            result.append((lo, hi, after))
+        return result
+
+    def conflicts(left, right):
+        a, b, _ = left
+        c, d, _ = right
+        # Conservative at insertion boundaries: never guess insertion order.
+        return (
+            max(a, c) < min(b, d) or (a == b and c <= a <= d) or (c == d and a <= c <= b)
+        ) and left != right
+
+    for original in patches:
+        patch = replace(
+            original,
+            source_patch_ids=list(original.source_patch_ids),
+            issue_ids=list(original.issue_ids),
+        )
+        if patch.action != "replace_text":
+            result.append(patch)
+            continue
+        span = resolve_span(spans, span_id=patch.span_id, label=patch.span_label)
+        if (
+            not patch.decidable
+            or span is None
+            or patch.start_in_span < 0
+            or span.text[patch.start_in_span : patch.end_in_span] != patch.before
+        ):
+            result.append(patch)
+            continue
+        index = 0
+        while index < len(result):
+            other = result[index]
+            if other.action != "replace_text":
+                index += 1
+                continue
+            if (
+                other.span_id != patch.span_id
+                or other.status != patch.status
+                or not other.decidable
+                or max(other.start_in_span, patch.start_in_span)
+                >= min(other.end_in_span, patch.end_in_span)
+                or span.text[other.start_in_span : other.end_in_span] != other.before
+            ):
+                index += 1
+                continue
+            left, right = operations(other), operations(patch)
+            if any(conflicts(a, b) for a in left for b in right):
+                index += 1
+                continue
+            start = min(
+                [other.start_in_span, patch.start_in_span] + [a for a, _, _ in left + right]
+            )
+            end = max([other.end_in_span, patch.end_in_span] + [b for _, b, _ in left + right])
+            before = span.text[start:end]
+            after = before
+            for a, b, replacement in sorted(set(left + right), reverse=True):
+                after = after[: a - start] + replacement + after[b - start :]
+            if changes_code(before, after, span.text):
+                index += 1
+                continue
+            patch = replace(
+                other,
+                start_in_span=start,
+                end_in_span=end,
+                before=before,
+                quote=before,
+                replace=after,
+                delete=not bool(after),
+                source_patch_ids=list(
+                    dict.fromkeys(
+                        [
+                            other.patch_id,
+                            *other.source_patch_ids,
+                            patch.patch_id,
+                            *patch.source_patch_ids,
+                        ]
+                    )
+                ),
+                issue_ids=list(
+                    dict.fromkeys(
+                        i
+                        for i in [
+                            other.issue_id,
+                            *other.issue_ids,
+                            patch.issue_id,
+                            *patch.issue_ids,
+                        ]
+                        if i is not None
+                    )
+                ),
+                rationale="；".join(
+                    dict.fromkeys(r for r in [other.rationale, patch.rationale] if r)
+                ),
+            )
+            result.pop(index)
+            index = 0
+        result.append(patch)
+    return result
+
+
 def apply_patches(
     document: str,
     spans: Iterable[Span],
@@ -451,6 +657,7 @@ def apply_patches(
         return outcome
 
     targets: list[tuple[int, int, Patch]] = []
+    structured = []
     for patch in accepted:
         span = resolve_span(spans, span_id=patch.span_id, label=patch.span_label)
         if span is None or patch.start_in_span < 0:
@@ -460,7 +667,14 @@ def apply_patches(
                 patch.conflict_reason = CONFLICT_TEXT["no_span"]
             outcome.skipped.append(patch)
             continue
-        before = span.text[patch.start_in_span:patch.end_in_span]
+        if patch.action != "replace_text":
+            # Structural edits are staged, not forged into the Markdown view.
+            # They are preflighted on OOXML before final confirmation.
+            patch.status = STATUS_APPLIED
+            patch.applied_at = utc_now()
+            structured.append(patch)
+            continue
+        before = span.text[patch.start_in_span : patch.end_in_span]
         if changes_code(before, patch.replace, span.text):
             _conflict(patch, "code_protected")
             outcome.skipped.append(patch)
@@ -469,6 +683,12 @@ def apply_patches(
         end = span.start + patch.end_in_span
         targets.append((start, end, patch))
 
+    combined = coalesce_compatible_patches([patch for _, _, patch in targets], spans)
+    targets = [
+        (span.start + patch.start_in_span, span.start + patch.end_in_span, patch)
+        for patch in combined
+        if (span := resolve_span(spans, span_id=patch.span_id, label=patch.span_label)) is not None
+    ]
     targets.sort(key=lambda item: item[0])
 
     # 处理重叠：只保留更靠前的一条
@@ -508,7 +728,7 @@ def apply_patches(
     # 删除类修改可能留下多余空行，顺手清理一下
     new_document = re.sub(r"\n{3,}", "\n\n", new_document)
     outcome.document = new_document
-    outcome.applied = list(reversed(applied))
+    outcome.applied = list(reversed(applied)) + structured
     outcome.spans_after = spans_after
     return outcome
 

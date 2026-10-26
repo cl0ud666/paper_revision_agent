@@ -17,8 +17,7 @@ import math
 import random
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeoutError
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 from typing import Any, Callable, TypeVar
 
@@ -132,9 +131,7 @@ class AgentGuard:
     default_timeout: float | None = 180.0
     sleep: Callable[[float], None] = time.sleep
     on_event: Callable[[str], None] | None = None
-    _lock: threading.Lock = field(
-        default_factory=threading.Lock, repr=False, compare=False
-    )
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def run(
         self,
@@ -237,9 +234,7 @@ class AgentGuard:
             except Exception:  # noqa: BLE001
                 pass
 
-    def _success_message(
-        self, action: str, value: Any, attempts: int, started: float
-    ) -> str:
+    def _success_message(self, action: str, value: Any, attempts: int, started: float) -> str:
         """成功时的输出：Agent、动作、耗时、Token、以及返回内容的预览。"""
 
         duration_ms = (time.perf_counter() - started) * 1000.0

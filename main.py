@@ -34,7 +34,6 @@ from app.workflow.graph import build_graph, mermaid
 from app.workflow.harness import Harness
 from app.workflow.interaction import dispatch_request
 
-
 SEVERITY_LABEL = {"high": "高", "medium": "中", "low": "低"}
 
 
@@ -69,8 +68,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--rule",
         action="append",
         default=[],
-        help="本轮及后续所有轮次都有效的要求，可重复传入"
-        "（例如：全文统一把“土豆”写成“马铃薯”）",
+        help="本轮及后续所有轮次都有效的要求，可重复传入（例如：全文统一把“土豆”写成“马铃薯”）",
     )
     parser.add_argument(
         "--auto-approve",
@@ -82,8 +80,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--run-id", type=str, default="", help="自定义 run_id")
     parser.add_argument("--show-graph", action="store_true", help="打印并导出 Workflow 结构")
-    parser.add_argument("--setup-checkpoint", action="store_true", help="初始化持久化 Checkpoint 数据库（部署时执行一次）")
-    '''
+    parser.add_argument(
+        "--setup-checkpoint",
+        action="store_true",
+        help="初始化持久化 Checkpoint 数据库（部署时执行一次）",
+    )
+    """
     show_graph() 什么时候被调用？
 靠 main() 里手写的一段判断：
 
@@ -94,7 +96,7 @@ def main():
     if args.show_graph:          # ← 只有这里才会触发
         show_graph()             # ← 真正调用
         return
-'''
+"""
     parser.add_argument(
         "--inspect",
         action="store_true",
@@ -103,7 +105,10 @@ def main():
     parser.add_argument("--ping", action="store_true", help="检查 LLM 配置与连通性")
     parser.add_argument("--quiet", "-q", action="store_true", help="减少过程日志")
     return parser.parse_args(argv)
-#命令行输入格式解析，比如-f是什么 -c是什么 自定义的
+
+
+# 命令行输入格式解析，比如-f是什么 -c是什么 自定义的
+
 
 def read_input(args: argparse.Namespace) -> tuple[str, Any]:
     """读取论文内容，并尽量带上"文件加载结果"（含能否写回 Word）。"""
@@ -199,7 +204,9 @@ def show_structure(document: str, name: str = "", *, loaded: Any = None) -> None
         f"标题 {report['headings']} 个，表格 {report['tables']} 个，"
         f"按噪声跳过 {report['skipped_noise']} 个"
     )
-    print(f"默认送审（摘要+正文）：{len(auditable)} 块（可用 PRA_AUDIT_SCOPE=body+refs / all 调整）")
+    print(
+        f"默认送审（摘要+正文）：{len(auditable)} 块（可用 PRA_AUDIT_SCOPE=body+refs / all 调整）"
+    )
 
     stats = getattr(loaded, "docx_stats", None) or {}
     if getattr(loaded, "can_write_back", False):
@@ -216,8 +223,7 @@ def show_structure(document: str, name: str = "", *, loaded: Any = None) -> None
     for span in spans[:16]:
         flag = f"（跳过：{span.no_reason}）" if not span.auditable else ""
         print(
-            f"  {span.label:5} [{ZONE_NAMES.get(span.zone, span.zone)}] {flag}"
-            f"{span.preview[:44]}"
+            f"  {span.label:5} [{ZONE_NAMES.get(span.zone, span.zone)}] {flag}{span.preview[:44]}"
         )
 
     warnings: list[str] = []
@@ -250,10 +256,7 @@ def ask_human(request: dict) -> dict:
     print("\n========== 需要你确认的修改范围 ==========")
     for issue in issues:
         severity = SEVERITY_LABEL.get(issue.get("severity", ""), issue.get("severity", ""))
-        print(
-            f"[{issue.get('id')}] ({severity} / {issue.get('category')}) "
-            f"{issue.get('problem')}"
-        )
+        print(f"[{issue.get('id')}] ({severity} / {issue.get('category')}) {issue.get('problem')}")
         if issue.get("location"):
             print(f"      位置：{issue['location']}")
         if issue.get("suggestion"):
@@ -263,9 +266,7 @@ def ask_human(request: dict) -> dict:
         raw_ids = input(
             "\n请输入要修改的问题编号（逗号分隔；直接回车=全部；none=都不修改）："
         ).strip()
-        raw_constraints = input(
-            "请输入修改约束（多条用分号分隔，可留空）："
-        ).strip()
+        raw_constraints = input("请输入修改约束（多条用分号分隔，可留空）：").strip()
     except (EOFError, KeyboardInterrupt):
         print("\n[CLI] 无法读取输入，自动批准全部问题。")
         return {
@@ -283,9 +284,7 @@ def ask_human(request: dict) -> dict:
         approved = raw_ids
 
     constraints = [
-        piece.strip()
-        for piece in raw_constraints.replace("；", ";").split(";")
-        if piece.strip()
+        piece.strip() for piece in raw_constraints.replace("；", ";").split(";") if piece.strip()
     ]
 
     return {
@@ -386,9 +385,7 @@ def ask_final_confirm(request: dict) -> dict:
             print(f"    原因：{patch['rationale']}")
 
     try:
-        raw = input(
-            "\n要剔除哪几条？（例如 2,5；回车 = 全部写入；none = 都不写入）："
-        ).strip()
+        raw = input("\n要剔除哪几条？（例如 2,5；回车 = 全部写入；none = 都不写入）：").strip()
     except (EOFError, KeyboardInterrupt):
         print("\n[CLI] 无法读取输入，默认全部写入。")
         return {"excluded_ids": []}
@@ -397,7 +394,11 @@ def ask_final_confirm(request: dict) -> dict:
         return {"exclude_all": True}
     if not raw:
         return {"excluded_ids": []}
-    return {"excluded_ids": [piece.strip() for piece in raw.replace("，", ",").split(",") if piece.strip()]}
+    return {
+        "excluded_ids": [
+            piece.strip() for piece in raw.replace("，", ",").split(",") if piece.strip()
+        ]
+    }
 
 
 def ask_issues(request: dict) -> dict:
@@ -441,7 +442,11 @@ def ask_issues(request: dict) -> dict:
         ).strip()
     except (EOFError, KeyboardInterrupt):
         print("\n[CLI] 无法读取输入，这些矛盾先不改。")
-        return {"ignore_ids": [issue["id"] for issue in issues], "rules": [], "turn": request.get("turn")}
+        return {
+            "ignore_ids": [issue["id"] for issue in issues],
+            "rules": [],
+            "turn": request.get("turn"),
+        }
 
     chosen = _resolve_choices(raw, issues)
     return {
@@ -489,7 +494,7 @@ def _resolve_choices(raw: str, issues: list[dict]) -> list[str]:
 
     # 一个选项都没认出来 → 整句当作用户自己写的判断。
     # 认出了一部分 → 只把没认出来的那截原样附上，不要把整串再塞一遍
-    #（否则会多出一条毫无意义的规则，例如"1好 2a 3a"）。
+    # （否则会多出一条毫无意义的规则，例如"1好 2a 3a"）。
     if not used_letters:
         return [raw]
     if leftover:
@@ -498,12 +503,15 @@ def _resolve_choices(raw: str, issues: list[dict]) -> list[str]:
 
 
 def ask_request(request: dict) -> dict:
-    return dispatch_request(request, {
-        "issue_review": ask_issues,
-        "patch_review": ask_patches,
-        "final_confirm": ask_final_confirm,
-        "human_approval": ask_human,
-    })
+    return dispatch_request(
+        request,
+        {
+            "issue_review": ask_issues,
+            "patch_review": ask_patches,
+            "final_confirm": ask_final_confirm,
+            "human_approval": ask_human,
+        },
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -511,6 +519,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.setup_checkpoint:
         from app.workflow.graph import setup_checkpointer
+
         setup_checkpointer()
         print("Checkpoint 数据库初始化完成。")
         return 0

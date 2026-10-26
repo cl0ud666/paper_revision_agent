@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 PYTHONUTF8=1
-RUN apt-get update && apt-get install -y --no-install-recommends libreoffice-writer fonts-noto-cjk \
+RUN apt-get update && apt-get install -y --no-install-recommends libreoffice-writer libreoffice-math fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt requirements-web.txt ./
 RUN pip install --no-cache-dir -r requirements.txt -r requirements-web.txt python-docx lxml
