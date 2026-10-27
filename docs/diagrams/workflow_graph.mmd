@@ -12,23 +12,25 @@ graph TD;
 	patch_review(patch_review)
 	apply(apply)
 	review(review)
+	prepare_report(prepare_report)
 	report(report)
 	__end__([<p>__end__</p>]):::last
 	__start__ --> orchestrator;
 	apply --> review;
 	audit -.-> issue_review;
-	audit -.-> report;
+	audit -. &nbsp;report&nbsp; .-> prepare_report;
 	audit -.-> revision;
-	issue_review -.-> report;
+	issue_review -. &nbsp;report&nbsp; .-> prepare_report;
 	issue_review -.-> revision;
 	orchestrator -.-> audit;
 	orchestrator -. &nbsp;human_approval&nbsp; .-> issue_review;
-	orchestrator -.-> report;
+	orchestrator -. &nbsp;report&nbsp; .-> prepare_report;
 	orchestrator -.-> revision;
 	patch_review -.-> apply;
-	patch_review -.-> report;
+	patch_review -. &nbsp;report&nbsp; .-> prepare_report;
+	prepare_report --> report;
 	review -.-> orchestrator;
-	review -.-> report;
+	review -. &nbsp;report&nbsp; .-> prepare_report;
 	revision --> patch_review;
 	report --> __end__;
 	classDef default fill:#f2f0ff,line-height:1.2

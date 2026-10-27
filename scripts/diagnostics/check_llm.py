@@ -5,7 +5,7 @@ LLM 连通性自检脚本。
 
 运行：
 
-    python test_llm.py
+    python -m scripts.diagnostics.check_llm
 """
 
 from __future__ import annotations

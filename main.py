@@ -160,14 +160,15 @@ def source_docx_path(args: argparse.Namespace) -> str:
 
 
 def show_graph() -> None:
-    """打印 Workflow 结构，并保存为 workflow_graph.mmd。"""
+    """打印 Workflow 结构，并保存到文档目录。"""
 
     graph = build_graph()
     code = mermaid(graph)
     print("\n========== GRAPH STRUCTURE ==========")
     print(code)
 
-    output = get_settings().paths.project_root / "workflow_graph.mmd"
+    output = get_settings().paths.project_root / "docs" / "diagrams" / "workflow_graph.mmd"
+    output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(code, encoding="utf-8")
     print(f"\n已保存到：{output}")
 

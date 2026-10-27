@@ -19,7 +19,7 @@ npx playwright install chromium
 npm run test:ui
 ```
 
-修改 Python 后运行 `ruff format`，前端运行 `npm run format`。测试目录包含历史 unittest 和 pytest 两种写法，统一用 pytest 收集。真实模型连通性检查单独使用 `python test_llm.py`，会调用配置的模型。
+修改 Python 后运行 `ruff format`，前端运行 `npm run format`。测试目录包含历史 unittest 和 pytest 两种写法，统一用 pytest 收集。真实模型连通性检查使用 `python -m scripts.diagnostics.check_llm`，会调用配置的模型并产生费用。
 
 ## 验证层次
 
@@ -39,9 +39,10 @@ npm run test:ui
 python -m scripts.diagnostics.inspect_run <run_id>
 python -m scripts.diagnostics.inspect_audit <run_id>
 python -m scripts.diagnostics.inspect_structure <file-or-run-dir>
+python -m scripts.diagnostics.check_llm
 ```
 
-以上只读本地数据；不要公开含论文内容的输出。`python -m scripts.diagnostics.run_audit_once <file-or-run-dir>` 会调用真实模型并产生费用，仅在明确需要时运行。
+前三项只读本地数据；不要公开含论文内容的输出。`check_llm` 和 `python -m scripts.diagnostics.run_audit_once <file-or-run-dir>` 会调用真实模型并产生费用，仅在明确需要时运行。
 
 ## 代码约束
 
