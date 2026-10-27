@@ -58,18 +58,53 @@ DIRECT_REVISION_HINTS = (
 DEFAULT_FOCUS_AREAS = tuple(ISSUE_CATEGORIES[:6])
 
 
-def requests_full_review(request):
-    """Formatting constraints do not cancel an explicit comprehensive review."""
+_NEGATED_REVIEW_RE = re.compile(
+    r"(?:不用|无需|不要|不需要|不必|不做|不进行)"
+    r"(?:再|继续|去|进行|做|任何|仅|只)?"
+    r"(?:对)?(?:全面|全文|整篇|整体|系统性)?"
+    r"(?:进行|做|地)?(?:检查|审查|审阅|校订)"
+    r"|\b(?:no|without|don't|don’t|do\s+not|not)\s+"
+    r"(?:(?:need|want|require)(?:\s+(?:to|for))?\s+)?"
+    r"(?:do\s+)?(?:(?:a|an|any)\s+)?(?:full\s+)?"
+    r"(?:review|audit|proofread)\b",
+    re.I,
+)
+
+
+def _review_request_signals(request: Any) -> tuple[bool, bool]:
+    """Return (comprehensive review, any review keyword), sharing negation handling."""
+
     text = str(request or "")
-    if re.search(r"(?:不用|无需|不要|不需要)(?:全面|全文|整体)?(?:检查|审查|审阅)", text):
-        return False
-    return bool(
-        re.search(
-            r"(?:全面|全文|整体|系统性).{0,6}(?:检查|审查|审阅|校订|修改)|full review|proofread",
-            text,
-            re.I,
-        )
+    # Treat clauses independently: a negated local request must not suppress
+    # a separate positive request in the same sentence.
+    clauses = re.split(
+        r"[,，;；。.!?！？\n]+|(?:但|但是|不过|并且|同时|而且|以及)|\bbut\b|\bhowever\b",
+        text,
+        flags=re.I,
     )
+    comprehensive = False
+    any_review_keyword = False
+    for clause in clauses:
+        if _NEGATED_REVIEW_RE.search(clause):
+            continue
+        comprehensive = comprehensive or bool(
+            re.search(
+                r"(?:全面|全文|整体|系统性).{0,6}(?:检查|审查|审阅|校订|修改)|full review|proofread",
+                clause,
+                re.I,
+            )
+        )
+        lowered = clause.lower()
+        any_review_keyword = any_review_keyword or any(
+            keyword.lower() in lowered for keyword in FULL_REVIEW_KEYWORDS
+        )
+    return comprehensive, any_review_keyword
+
+
+def requests_full_review(request: Any) -> bool:
+    """Formatting constraints do not cancel an explicit comprehensive review."""
+
+    return _review_request_signals(request)[0]
 
 
 def requires_initial_audit(state):
@@ -106,6 +141,7 @@ def plan(
         context_text,
         is_replan=is_replan,
         max_iterations=int(state.get("max_iterations", settings.workflow.max_iterations)),
+        turn=int(state.get("turn", 1)),
     )
 
     guard = get_guard("orchestrator", on_event=log)
@@ -223,7 +259,6 @@ def fallback_plan(state: Any) -> dict[str, Any]:
     max_iterations = int(state.get("max_iterations", 3))
     document = (state.get("current_document") or "").strip()
     request = state.get("user_request") or ""
-    request_lower = request.lower()
     review_result = state.get("review_result") or {}
     remaining = review_result.get("remaining_issues") or []
     audit_findings = state.get("audit_findings") or []
@@ -273,16 +308,25 @@ def fallback_plan(state: Any) -> dict[str, Any]:
         )
 
     # ---------- 首轮规划 ----------
-    if audit_findings and not approved:
+    pending_decisions = [
+        issue
+        for issue in audit_findings
+        if (issue.get("kind") or "fix") == "decision" and not issue.get("ignored")
+    ]
+    if pending_decisions and not state.get("decisions"):
         return _result(
             "human_approval",
-            "已有审查结果，等待用户确认修改范围。",
-            ["交给用户确认修改范围"],
+            "已有必须由作者拍板的审查结果，等待用户确认口径。",
+            ["交给用户确认存在歧义的口径"],
+        )
+    if audit_findings and not approved:
+        return _result(
+            "revision",
+            "已有可直接处理的审查结果，继续生成修改补丁。",
+            ["根据审查结果生成修改补丁"],
         )
 
-    wants_full_review = any(
-        keyword in request or keyword in request_lower for keyword in FULL_REVIEW_KEYWORDS
-    )
+    _, wants_full_review = _review_request_signals(request)
     wants_direct = any(hint in request for hint in DIRECT_REVISION_HINTS)
 
     if wants_full_review and not wants_direct:

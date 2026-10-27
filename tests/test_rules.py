@@ -142,6 +142,9 @@ class TestCallObservability(unittest.TestCase):
     """① 每次调用都要有输出：控制台一行摘要 + 落盘完整 Prompt/返回。"""
 
     def setUp(self) -> None:
+        self._original_pra_env = {
+            key: os.environ.get(key) for key in ("PRA_DATA_DIR", "PRA_RUNS_DIR")
+        }
         self.tmp_dir = Path(tempfile.mkdtemp(prefix="pra-rules-"))
         os.environ["PRA_DATA_DIR"] = str(self.tmp_dir)
         os.environ["PRA_RUNS_DIR"] = str(self.tmp_dir / "runs")
@@ -153,8 +156,11 @@ class TestCallObservability(unittest.TestCase):
         reset_llm_factory()
         reset_guards()
         reset_recorders()
-        for key in ("PRA_DATA_DIR", "PRA_RUNS_DIR"):
-            os.environ.pop(key, None)
+        for key, value in self._original_pra_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         reset_settings()
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 

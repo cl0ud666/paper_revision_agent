@@ -271,11 +271,27 @@ class TestRedline(unittest.TestCase):
             quote="取得了更好的效果",
             replace="取得了更好的效果（在 5 个数据集上验证）",
         )
-        result, _ = export(self.data, [rounds])
+        result, out_bytes = export(self.data, [rounds])
 
         expected = self.text.replace("取得了更好的效果", "取得了更好的效果（在 5 个数据集上验证）")
         self.assertEqual(result.text, expected)
         self.assertEqual(result.text, new_text)
+
+        mutable_parts = {
+            "[Content_Types].xml",
+            "word/document.xml",
+            "word/settings.xml",
+            "word/comments.xml",
+            "word/_rels/document.xml.rels",
+        }
+        with zipfile.ZipFile(io.BytesIO(self.data)) as original:
+            with zipfile.ZipFile(io.BytesIO(out_bytes)) as exported:
+                self.assertTrue(set(original.namelist()) - mutable_parts)
+                for name in original.namelist():
+                    if name in mutable_parts:
+                        continue
+                    self.assertIn(name, exported.namelist())
+                    self.assertEqual(exported.read(name), original.read(name), name)
 
     def test_whole_paragraph_rewrite_cannot_destroy_existing_formula(self) -> None:
         """A plain-text replacement must never erase an existing OMML object."""

@@ -6,7 +6,6 @@
   margin-bottom: 24px;
 }
 .review-heading,
-.review-toolbar,
 .page-controls,
 .review-card-top {
   display: flex;
@@ -20,17 +19,6 @@
 .review-heading > strong {
   white-space: nowrap;
   color: #476044;
-}
-.review-caution {
-  font-size: 13px;
-  color: #835e2d;
-  background: #faf4e8;
-  padding: 12px 16px;
-  border-radius: 8px;
-}
-.review-toolbar {
-  flex-wrap: wrap;
-  margin: 20px 0 14px;
 }
 .page-controls {
   flex-wrap: wrap;
@@ -263,10 +251,6 @@
   flex-direction: column;
   scroll-margin-top: 16px;
 }
-.review-workspace > .review-toolbar {
-  flex: none;
-  margin-top: 8px;
-}
 .review-workspace > .review-board {
   flex: 1;
   height: auto;
@@ -412,10 +396,6 @@ button:disabled {
   }
   .review-heading {
     flex-direction: column;
-  }
-  .review-toolbar {
-    align-items: flex-start;
-    gap: 16px;
   }
   .page-controls {
     justify-content: flex-start;

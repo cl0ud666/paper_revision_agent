@@ -58,12 +58,24 @@ class WorkflowTestCase(unittest.TestCase):
     """公共环境：临时 data 目录 + 假 LLM。"""
 
     def setUp(self) -> None:
+        self._original_pra_env = {
+            key: os.environ.get(key)
+            for key in (
+                "PRA_RUNS_DIR",
+                "PRA_DATA_DIR",
+                "PRA_RETRY_MAX_ATTEMPTS",
+                "PRA_RETRY_BASE_DELAY",
+                "PRA_PATCH_GATE",
+                "PRA_FINAL_CONFIRM",
+            )
+        }
         self.tmp_dir = Path(tempfile.mkdtemp(prefix="pra-test-"))
         os.environ["PRA_RUNS_DIR"] = str(self.tmp_dir / "runs")
         os.environ["PRA_DATA_DIR"] = str(self.tmp_dir)
         os.environ["PRA_RETRY_MAX_ATTEMPTS"] = "1"
         os.environ["PRA_RETRY_BASE_DELAY"] = "0"
-        # 这个文件验证的是**交互式**流程，所以把两道闸门打开
+        # 这个文件验证的是**交互式**流程，所以打开补丁闸门；
+        # decision findings 仍由工作流按问题类型进入人工拍板。
         os.environ["PRA_PATCH_GATE"] = "1"
         # 写 Word 前的那次确认对这里的断言没意义，关掉
         os.environ["PRA_FINAL_CONFIRM"] = "0"
@@ -75,13 +87,11 @@ class WorkflowTestCase(unittest.TestCase):
         reset_llm_factory()
         reset_guards()
         reset_recorders()
-        for key in (
-            "PRA_RUNS_DIR",
-            "PRA_DATA_DIR",
-            "PRA_RETRY_MAX_ATTEMPTS",
-            "PRA_RETRY_BASE_DELAY",
-        ):
-            os.environ.pop(key, None)
+        for key, value in self._original_pra_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         reset_settings()
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
@@ -240,29 +250,6 @@ class TestHappyPath(WorkflowTestCase):
 
     def test_ignoring_issues_is_remembered(self) -> None:
         """用户说“这个不用改”之后：不再进入修改，并且记进要求清单。"""
-
-        self.install(
-            {
-                ORCHESTRATOR_HEADER: plan_response("audit"),
-                AUDIT_HEADER: audit_response(
-                    [
-                        {
-                            "span_label": "P01",
-                            "category": "学术规范",
-                            "severity": "medium",
-                            "problem": "参考文献格式不统一",
-                            "evidence": ISSUE_SENTENCE,
-                            "suggestion": "统一格式",
-                        }
-                    ]
-                ),
-                REVISION_HEADER: patch_response([]),
-                REVIEW_HEADER: review_response("pass"),
-            }
-        )
-
-        harness = Harness(logger=lambda message: None)
-        self.assertIsNotNone(harness)  # 保持与其他用例一致的构造方式
 
         # 忽略机制**保留**（只是不再在闸门里问用户"要忽略哪些"）。
         # 这里直接验证机制本身：给出 ignore 决定后，问题被标成 ignored，

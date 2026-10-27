@@ -147,7 +147,7 @@ def audit_node(state: Any, *, logger: Callable[[str], None] | None = None) -> di
                 issue["audit_anchor_text"] = span.text if span else issue.get("evidence", "")
                 deferred.append(dict(issue))
         update["deferred_advice"] = deferred
-    # 新一轮审查产生的问题默认都未批准，必须重新经过人工确认
+    # 保留兼容元数据；实际只有 decision findings 会进入人工确认。
     issue_gate = get_settings().workflow.issue_gate
     update["issue_gate"] = issue_gate
     if issue_gate:

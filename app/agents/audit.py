@@ -244,8 +244,6 @@ def _audit_one_chunk(
     iteration: int,
     document: str,
     naming_hint: list[dict[str, Any]],
-    section_gaps: list[dict[str, Any]],
-    near_misses: list[dict[str, Any]],
 ) -> _ChunkOutcome:
     """
     审查单个分块（并发执行的最小单元）。
@@ -259,8 +257,6 @@ def _audit_one_chunk(
     consistency_hint = _consistency_hint(
         chunk_labels,
         naming=naming_hint,
-        gaps=section_gaps,
-        near_misses=near_misses,
     )
     fields = build_context(
         state,
@@ -319,8 +315,6 @@ def _run_chunks(
     iteration: int,
     document: str,
     naming_hint: list[dict[str, Any]],
-    section_gaps: list[dict[str, Any]],
-    near_misses: list[dict[str, Any]],
     settings: Settings,
 ) -> _ChunkBatch:
     """
@@ -364,8 +358,6 @@ def _run_chunks(
         "iteration": iteration,
         "document": document,
         "naming_hint": naming_hint,
-        "section_gaps": section_gaps,
-        "near_misses": near_misses,
         "chunk_total": total,
     }
 
@@ -548,8 +540,6 @@ def _run_targeted_checks(
     iteration: int,
     document: str,
     naming_hint: list[dict[str, Any]],
-    section_gaps: list[dict[str, Any]],
-    near_misses: list[dict[str, Any]],
     settings: Settings,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """
@@ -583,8 +573,6 @@ def _run_targeted_checks(
     hint = _consistency_hint(
         {span.label for span in auditable},
         naming=naming_hint,
-        gaps=section_gaps,
-        near_misses=near_misses,
     )
 
     def run_one(index: int, comparison: dict[str, Any]) -> tuple[int, list[dict[str, Any]], str]:
@@ -680,8 +668,6 @@ def _whole_paper_check(
     document: str,
     auditable: list[Span],
     naming_hint: list[dict[str, Any]],
-    section_gaps: list[dict[str, Any]],
-    near_misses: list[dict[str, Any]],
     settings: Settings,
     known_issues: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], bool, str]:
@@ -709,8 +695,6 @@ def _whole_paper_check(
     consistency_hint = _consistency_hint(
         {span.label for span in auditable},
         naming=naming_hint,
-        gaps=section_gaps,
-        near_misses=near_misses,
     )
     already: list[str] = []
     for issue in (known_issues or [])[:40]:
@@ -871,8 +855,7 @@ def run(
     chunks = all_chunks[:max_chunks] if max_chunks else all_chunks
     dropped_chunks = len(all_chunks) - len(chunks)
 
-    # 确定性一致性检查（不吃"批次运气"）：写法不统一 / 只在总结里出现 / 疑似拼错
-    # 术语一致性扫描：**排除代码段**。
+    # 确定性术语一致性扫描（不吃"批次运气"），**排除代码段**。
     # 代码里的常量名/大小写（MOCO_QUEUE_SIZE、DATAset…）不归本文档的工具管——
     # 用户明确要求：代码一律不碰，连建议都不给。
     prose_spans = [span for span in auditable if not looks_like_code(span.text)]
@@ -886,17 +869,6 @@ def run(
         _span = _by_label.get(str(_issue.get("span_label") or ""))
         if _span is not None:
             _issue["span_id"] = _span.id
-    # 下面两类**刻意不启用**：
-    #   find_near_miss_names —— 靠"和另一个写法只差一个字符 + 出现次数少"猜笔误。
-    #     GNN/KNN、DIR/DIM、SVM/SIM 都是真实存在的独立术语，只差一个字母
-    #     说明不了任何问题，这种"猜"每轮都会冒出来挡住复核，实测只会制造噪音。
-    #   find_cross_section_gaps —— 靠"只在摘要出现、正文没出现"报问题。
-    #     实测会误报（ADFA-LD 在正文有专门小节，只是专名被截成 ADFA），
-    #     而且这属于"请作者核对"而不是缺陷，不该进问题清单。
-    # 写法统一（MoCo/MOCO 这类同一个词的大小写差异）保留——那不是靠次数猜的。
-    section_gaps: list[dict[str, Any]] = []
-    near_misses: list[dict[str, Any]] = []
-
     structure = structure_report(spans)
     log(
         f"[Audit] 文档共 {structure['blocks']} 块；按范围「{scope}」送审 "
@@ -934,8 +906,6 @@ def run(
         iteration=iteration,
         document=document,
         naming_hint=naming_hint,
-        section_gaps=section_gaps,
-        near_misses=near_misses,
         settings=settings,
     )
     for index in sorted(batch.outcomes):
@@ -986,8 +956,6 @@ def run(
             iteration=iteration,
             document=document,
             naming_hint=naming_hint,
-            section_gaps=section_gaps,
-            near_misses=near_misses,
             settings=settings,
         )
         raw_issues.extend(targeted_issues)
@@ -1043,8 +1011,6 @@ def run(
             document=document,
             auditable=auditable,
             naming_hint=naming_hint,
-            section_gaps=section_gaps,
-            near_misses=near_misses,
             settings=settings,
             # 把分块/专名/定向已经报过的问题交给整篇：
             # 否则它那 15 条输出配额会被"错别字"这类局部问题占满，

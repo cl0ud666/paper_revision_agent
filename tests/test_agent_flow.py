@@ -50,13 +50,28 @@ INTRO_IMPROVED = "图神经网络已被广泛用于节点分类任务。"
 
 class AgentFlowTestCase(unittest.TestCase):
     def setUp(self) -> None:
+        self._original_pra_env = {
+            key: os.environ.get(key)
+            for key in (
+                "PRA_DATA_DIR",
+                "PRA_RUNS_DIR",
+                "PRA_CHECKPOINT_DB",
+                "PRA_RETRY_MAX_ATTEMPTS",
+                "PRA_RETRY_BASE_DELAY",
+                "PRA_PATCH_GATE",
+                "PRA_FINAL_CONFIRM",
+                "PRA_BUDGET_RUN_TOKENS",
+                "PRA_BUDGET_TURN_TOKENS",
+            )
+        }
         self.tmp_dir = Path(tempfile.mkdtemp(prefix="pra-flow-"))
         os.environ["PRA_DATA_DIR"] = str(self.tmp_dir)
         os.environ["PRA_RUNS_DIR"] = str(self.tmp_dir / "runs")
         os.environ["PRA_CHECKPOINT_DB"] = str(self.tmp_dir / "checkpoints" / "test.sqlite")
         os.environ["PRA_RETRY_MAX_ATTEMPTS"] = "1"
         os.environ["PRA_RETRY_BASE_DELAY"] = "0"
-        # 这个文件验证的是**交互式**流程，所以把两道闸门打开
+        # 这个文件验证的是**交互式**流程，所以打开补丁闸门；
+        # decision findings 仍由工作流按问题类型进入人工拍板。
         os.environ["PRA_PATCH_GATE"] = "1"
         os.environ["PRA_FINAL_CONFIRM"] = "0"
         reset_settings()
@@ -69,16 +84,11 @@ class AgentFlowTestCase(unittest.TestCase):
         reset_guards()
         reset_recorders()
         reset_checkpointers()
-        for key in (
-            "PRA_DATA_DIR",
-            "PRA_RUNS_DIR",
-            "PRA_CHECKPOINT_DB",
-            "PRA_RETRY_MAX_ATTEMPTS",
-            "PRA_RETRY_BASE_DELAY",
-            "PRA_BUDGET_RUN_TOKENS",
-            "PRA_BUDGET_TURN_TOKENS",
-        ):
-            os.environ.pop(key, None)
+        for key, value in self._original_pra_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         reset_settings()
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 

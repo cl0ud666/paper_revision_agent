@@ -13,7 +13,6 @@ from app.config import get_settings
 from app.document.spans import Span, render_annotated
 from app.utils.consistency import (
     collect_proper_names,
-    describe_entity_check,
     describe_naming_variants,
 )
 from app.utils.text import looks_like_code, normalize_whitespace
@@ -23,14 +22,12 @@ def _consistency_hint(
     chunk_labels: set[str],
     *,
     naming: list[dict[str, Any]],
-    gaps: list[dict[str, Any]],
-    near_misses: list[dict[str, Any]],
 ) -> str:
     """
     只挑"与本批次有关"的一致性线索放进上下文。
 
     全量塞进去有两个坏处：占掉审查正文的预算；同一个词会被每批评一次。
-    所以三类线索都按"是否出现在本批次"过滤。
+    所以只保留出现在本批次的术语写法线索。
     """
 
     def relevant(labels: list[str]) -> bool:
@@ -41,20 +38,7 @@ def _consistency_hint(
         for item in naming
         if relevant([label for labels in (item.get("variants") or {}).values() for label in labels])
     ]
-    relevant_gaps = [item for item in gaps if relevant(list(item.get("labels") or []))]
-    relevant_misses = [
-        item
-        for item in near_misses
-        if relevant(list(item.get("suspected_labels") or []))
-        or relevant(list(item.get("likely_labels") or []))
-    ]
-
-    sections: list[str] = []
-    naming_text = describe_naming_variants(relevant_naming)
-    if naming_text:
-        sections.append(naming_text)
-    sections.extend(describe_entity_check(relevant_gaps, relevant_misses))
-    return "\n\n".join(sections)
+    return describe_naming_variants(relevant_naming)
 
 
 # ---------------------------------------------------------------- 专名核验
@@ -162,7 +146,6 @@ _METRIC_WEAK = (
     "相比",
     "优于",
 )
-_METRIC_HINTS = _METRIC_STRONG + _METRIC_WEAK
 
 
 def _is_conclusion_span(span: Span) -> bool:

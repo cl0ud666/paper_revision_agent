@@ -12,8 +12,8 @@
     Review FAIL → Orchestrator（Adaptive Re-planning）→ Audit / Revision / Report
 
 Human Approval 通过 ``interrupt`` 暂停，因此 Graph 必须带 Checkpointer 编译。
-（``PRA_ISSUE_GATE=1`` 时会在 Audit 之后额外加一道“先确认要改哪些问题”的闸门，
-默认关闭，避免让用户来回确认两次。）
+问题闸门只对 Audit 标记为 ``decision`` 的前后矛盾生效；普通 fix/advice 不额外打断用户。
+``PRA_ISSUE_GATE`` 作为兼容配置保留，但不改变这一决策类型边界。
 """
 
 from __future__ import annotations

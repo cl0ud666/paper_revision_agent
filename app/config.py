@@ -197,7 +197,7 @@ class WorkflowSettings:
     recursion_limit: int
     checkpoint_db: str
     agent_timeout: float
-    # Audit 之后是否先问一句"这些问题有没有要忽略的"（默认开）。
+    # 兼容字段：实际只对 decision findings 进入人工拍板闸门（默认关）。
     issue_gate: bool
     # 补丁审阅闸门（默认**关**）：
     #   False = 不打断用户，Revision 报出「原文／准备修改为／原因」后直接应用；
@@ -379,9 +379,9 @@ def get_settings() -> Settings:
                 "PRA_CHECKPOINT_DB", str(data_dir / "checkpoints" / "paper_agent.sqlite")
             ),
             agent_timeout=_get_float("PRA_AGENT_TIMEOUT", 180.0),
-            # 默认开启：Audit 之后先问一句“这些问题有没有要忽略的”，
-            # 并把用户的决定持久记下来（多轮不再重复问）。
-            issue_gate=_get_bool("PRA_ISSUE_GATE", True),
+            # 保留旧配置入口；当前流程只对 decision findings 进入人工拍板，
+            # 普通 fix/advice 直接进入 Revision。
+            issue_gate=_get_bool("PRA_ISSUE_GATE", False),
             patch_gate=_get_bool("PRA_PATCH_GATE", False),
             final_confirm=_get_bool("PRA_FINAL_CONFIRM", True),
             audit_scope=_get("PRA_AUDIT_SCOPE", "body"),
