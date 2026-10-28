@@ -90,7 +90,9 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=ROOT / "artifacts" / f"paperfixer-update-{datetime.now():%Y%m%d-%H%M%S}.zip",
+        default=ROOT
+        / "artifacts"
+        / f"paper_revision_agent-update-{datetime.now():%Y%m%d-%H%M%S}.zip",
     )
     args = parser.parse_args()
     print(json.dumps(build_bundle(ROOT, args.output.resolve()), ensure_ascii=False))

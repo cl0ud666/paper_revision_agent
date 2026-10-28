@@ -21,17 +21,17 @@ python scripts/package_agent_update.py
 
 ```bash
 cd /opt/paper_revision_agent
-sudo install -d -m 700 /opt/paperfixer-backups
+sudo install -d -m 700 /opt/paper_revision_agent-backups
 sudo tar --exclude='frontend/node_modules' --exclude='frontend/dist' \
   --exclude='__pycache__' --exclude='frontend/test-results' \
-  -czf "/opt/paperfixer-backups/code-$(date +%Y%m%d-%H%M%S).tgz" \
+  -czf "/opt/paper_revision_agent-backups/code-$(date +%Y%m%d-%H%M%S).tgz" \
   app frontend migrations alembic.ini main.py requirements.txt requirements-web.txt deploy
 ```
 
 备份含部署密码，因此备份目录只允许root访问。迁移前单独备份PostgreSQL；下面通过同一个root shell写入受限目录：
 
 ```bash
-sudo sh -c 'umask 077; docker compose --env-file deploy/.env -f deploy/compose.yml -f deploy/compose.public.yml exec -T postgres pg_dump -U paper_agent -d paper_agent -Fc > "/opt/paperfixer-backups/database-$(date +%Y%m%d-%H%M%S).dump"'
+sudo sh -c 'umask 077; docker compose --env-file deploy/.env -f deploy/compose.yml -f deploy/compose.public.yml exec -T postgres pg_dump -U paper_agent -d paper_agent -Fc > "/opt/paper_revision_agent-backups/database-$(date +%Y%m%d-%H%M%S).dump"'
 ```
 
 另外按部署实际卷名备份MinIO和workspace。数据库备份不能代替文件备份，也不能只备份源码就声称能恢复全部用户数据。

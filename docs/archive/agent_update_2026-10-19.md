@@ -32,13 +32,13 @@ DOCX已重开并经LibreOffice渲染逐页检查；未使用Microsoft Word桌面
 这是已部署版本的更新包，不是首次部署包。只包含应用源码、前端构建源码/配置、依赖和Dockerfile；不包含或覆盖`.env`、`deploy/.env`、Compose配置、数据库、客户论文、存储卷。
 
 1. 等待已有任务结束，暂时不要提交新任务。保留当前Workbench会话。
-2. 把`paperfixer-update-20261019-agent.zip`上传到服务器`/opt/`。
+2. 把`paper_revision_agent-update-20261019-agent.zip`上传到服务器`/opt/`。
 3. 在Workbench执行下列命令，先备份源码，再覆盖更新文件。备份文件名带时间，方便恢复。
 
 ```bash
 cd /opt/paper_revision_agent
-tar --exclude='frontend/node_modules' --exclude='frontend/dist' --exclude='frontend/test-results' --exclude='__pycache__' -czf "/opt/paperfixer-code-before-$(date +%Y%m%d-%H%M%S).tgz" app frontend requirements.txt requirements-web.txt deploy/Dockerfile
-unzip -o /opt/paperfixer-update-20261019-agent.zip -d /opt/paper_revision_agent
+tar --exclude='frontend/node_modules' --exclude='frontend/dist' --exclude='frontend/test-results' --exclude='__pycache__' -czf "/opt/paper_revision_agent-code-before-$(date +%Y%m%d-%H%M%S).tgz" app frontend requirements.txt requirements-web.txt deploy/Dockerfile
+unzip -o /opt/paper_revision_agent-update-20261019-agent.zip -d /opt/paper_revision_agent
 COMPOSE_PARALLEL_LIMIT=1 docker compose --env-file deploy/.env -f deploy/compose.yml -f deploy/compose.public.yml build api worker dispatcher web
 ```
 

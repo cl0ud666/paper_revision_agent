@@ -54,7 +54,7 @@ export default function App() {
         <Link to="/" className="brand">
           <BookOpen size={29} />
           <span>
-            paperfixer<small>PAPER WORKSPACE</small>
+            paper_revision_agent<small>PAPER WORKSPACE</small>
           </span>
         </Link>
         <p className="nav-caption">你的研究工作台</p>

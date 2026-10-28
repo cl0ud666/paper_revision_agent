@@ -19,8 +19,8 @@ git remote -v
 git add .
 git diff --cached --stat
 git diff --cached --check
-git commit -m "Refactor PaperFixer for maintainability and public review"
-git remote add origin https://github.com/YOUR_ACCOUNT/paperfixer.git
+git commit -m "Refactor paper_revision_agent for maintainability and public review"
+git remote add origin https://github.com/YOUR_ACCOUNT/paper_revision_agent.git
 git push -u origin main
 ```
 

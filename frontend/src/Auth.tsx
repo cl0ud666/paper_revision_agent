@@ -31,7 +31,7 @@ export function Login() {
         <div className="brand">
           <BookOpen size={32} />
           <span>
-            paperfixer<small>PAPER WORKSPACE</small>
+            paper_revision_agent<small>PAPER WORKSPACE</small>
           </span>
         </div>
         <div>
@@ -39,10 +39,10 @@ export function Login() {
             <h1 className="refined-tagline">
               从语句到逻辑，
               <br />
-              paperfixer帮你精修论文
+              paper_revision_agent帮你精修论文
             </h1>
             <p className="tagline-en">
-              From sentences to logic, PaperFixer helps you polish your paper
+              From sentences to logic, paper_revision_agent helps you polish your paper
             </p>
           </div>
           <div className="story-steps">

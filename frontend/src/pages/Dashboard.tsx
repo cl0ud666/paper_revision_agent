@@ -26,10 +26,10 @@ export function Dashboard({ user }: { user: User }) {
       <section className="hero dashboard-hero">
         <div className="tagline-copy">
           <h1 className="refined-tagline">
-            从语句到逻辑，<span>paperfixer</span>帮你精修论文
+            从语句到逻辑，<span>paper_revision_agent</span>帮你精修论文
           </h1>
           <p className="tagline-en">
-            From sentences to logic, PaperFixer helps you polish your paper
+            From sentences to logic, paper_revision_agent helps you polish your paper
           </p>
         </div>
         <button className="primary" disabled={!canUpload} onClick={() => setUploadOpen(true)}>

@@ -285,6 +285,17 @@ small {
   opacity: 0.6;
   margin-top: 7px;
 }
+.brand > svg {
+  flex-shrink: 0;
+}
+.brand > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sidebar .brand {
+  font-size: 18px;
+  letter-spacing: 0;
+}
 .nav-caption {
   font-size: 10px;
   letter-spacing: 1px;
