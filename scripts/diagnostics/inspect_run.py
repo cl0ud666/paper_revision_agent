@@ -66,12 +66,12 @@ def inspect(run_id: str) -> None:
     print(f"  模型调用: {dict(Counter((r['agent'], r['action'].split('_')[0]) for r in records))}")
 
     revision_calls = [r for r in records if r["agent"] == "revision"]
-    print(f"  Revision 共 {len(revision_calls)} 批，各批实际拿到的文本范围：")
+    print(f"  Revision共 {len(revision_calls)} 批，各批实际拿到的文本范围：")
 
     chunks: list[set[str]] = []
     for record in revision_calls:
         prompt = record["prompt"]
-        body = section(prompt, "待处理文本（带段落 ID）")
+        body = section(prompt, "待处理文本（带段落ID）")
         chunk_labels = labels(body)
         chunks.append(set(chunk_labels))
         issues = labels(section(prompt, "需要解决的问题"))

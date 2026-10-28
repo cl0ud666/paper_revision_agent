@@ -163,7 +163,7 @@ def block_for(source, item):
         raise ValueError("结构修改的段落无法定位")
     block = source.block_at(span.start)
     if block is None:
-        raise ValueError("结构修改的 Word 块无法定位")
+        raise ValueError("结构修改的Word块无法定位")
     return block
 
 

@@ -1,4 +1,4 @@
-"""业务事务：登录、用户隔离、额度和人工决策。网络任务由 outbox 投递。"""
+"""业务事务：登录、用户隔离、额度和人工决策。网络任务由outbox投递。"""
 
 import json
 import re
@@ -77,9 +77,9 @@ def user_json(user: User, db=None):
 def add_user(username: str, password: str, *, admin=False, daily_runs=None, run_tokens=None):
     username = username.strip().lower()
     if not re.fullmatch(r"[a-z0-9][a-z0-9_.@-]{2,79}", username):
-        raise ApiError(400, "账号需为 3–80 位字母、数字或 _ . @ -")
+        raise ApiError(400, "账号需为3–80位字母、数字或 _ . @ -")
     if not 6 <= len(password) <= 128:
-        raise ApiError(400, "密码需为 6–128 个字符")
+        raise ApiError(400, "密码需为6–128个字符")
     with transaction() as db:
         if db.scalar(select(User).where(User.username == username)):
             raise ApiError(409, "账号已存在")
@@ -149,7 +149,7 @@ def logout(token: str):
 def reset_password(username: str, password: str):
     """仅供管理命令使用；改密码时撤销此账号的全部会话。"""
     if not 6 <= len(password) <= 128:
-        raise ApiError(400, "密码需为 6–128 个字符")
+        raise ApiError(400, "密码需为6–128个字符")
     with transaction() as db:
         user = db.scalar(
             select(User).where(User.username == username.strip().lower()).with_for_update()
@@ -255,7 +255,7 @@ def create_run(user_id: str, data: bytes, filename: str, request: str, rules: li
             event(db, run, "queued", "文件已上传，等待处理")
             return run_json(run)
     except Exception:
-        # 只清理本次随机 key，数据库和对象存储之间不能使用同一个事务。
+        # 只清理本次随机key，数据库和对象存储之间不能使用同一个事务。
         try:
             store().delete(key)
         except Exception:

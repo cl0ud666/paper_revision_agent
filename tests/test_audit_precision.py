@@ -1,11 +1,11 @@
 """
-Audit 精度测试：好论文不该被报一堆问题。
+Audit精度测试：好论文不该被报一堆问题。
 
 覆盖：
 
 1. 证据必须能在段落里逐字找到，否则丢弃（防幻觉）；
-2. 默认丢掉 low（可改可不改）；
-3. 同一类系统性问题合并成一条（"参考文献格式不统一（共 3 处）"）；
+2. 默认丢掉low（可改可不改）；
+3. 同一类系统性问题合并成一条（"参考文献格式不统一（共3处）"）；
 4. 封面/目录/致谢不进审查；
 5. 分批时后面的批次能看到前面批次已提出的改动（跨批次对齐）。
 """
@@ -125,7 +125,7 @@ class TestNameCheck(AuditPrecisionTestCase):
     """
     专名核验：**正确写法不需要在文中出现过**。
 
-    "阿里云 ESC"应为 ECS——这是世界知识，不是前后文比对：
+    "阿里云ESC"应为ECS——这是世界知识，不是前后文比对：
     全篇只写了一次错字、正确写法一次都没出现，也必须能报出来。
     """
 
@@ -158,7 +158,7 @@ class TestNameCheck(AuditPrecisionTestCase):
         return audit_agent.run(state, logger=lambda message: None), calls
 
     def test_typo_without_any_correct_form_is_reported(self) -> None:
-        """全篇只有一处 ESC、没有 ECS——靠世界知识也要报出来。"""
+        """全篇只有一处ESC、没有ECS——靠世界知识也要报出来。"""
 
         update, calls = self.run_audit_with(
             [
@@ -172,7 +172,7 @@ class TestNameCheck(AuditPrecisionTestCase):
                     "context_basis": "全部实验在阿里云 ESC 上完成",
                 }
             ],
-            document=self.TYPO_DOC,  # 文中没有 ECS
+            document=self.TYPO_DOC,  # 文中没有ECS
         )
 
         # 确实发起了专名核验这一次调用
@@ -359,7 +359,7 @@ class TestSeverityThreshold(AuditPrecisionTestCase):
 
 class TestSystematicMerging(AuditPrecisionTestCase):
     def test_same_kind_issue_across_spans_becomes_one(self) -> None:
-        """同一个毛病在 3 个段落出现 → 只报一条，并列出涉及的段落。"""
+        """同一个毛病在3个段落出现 → 只报一条，并列出涉及的段落。"""
 
         update = self.run_audit(
             [

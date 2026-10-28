@@ -1,4 +1,4 @@
-"""CLI、Streamlit 和服务/API 共用的人工交互协议。"""
+"""CLI、Streamlit和服务/API共用的人工交互协议。"""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def prepare_response(request: dict[str, Any], payload: dict[str, Any]) -> dict[s
     """统一上下文校验、结构化选项和最终确认分组的展开。"""
     kind = request_type(request)
     if not isinstance(payload, dict):
-        raise ValueError("人工回答必须是 JSON 对象")
+        raise ValueError("人工回答必须是JSON对象")
     data = deepcopy(payload)
     # Reconstruct decision records only from the frozen server request.
     data.pop("selected_decisions", None)
@@ -37,7 +37,7 @@ def prepare_response(request: dict[str, Any], payload: dict[str, Any]) -> dict[s
         issues = {str(issue["id"]): issue for issue in request.get("issues", [])}
         choices = data["choices"]
         if not isinstance(choices, dict):
-            raise ValueError("choices 必须为 {issue_id: option_index} 对象")
+            raise ValueError("choices必须为 {issue_id: option_index} 对象")
         rules = list(data.get("rules") or [])
         decisions = []
         for issue_id, index in choices.items():
@@ -91,7 +91,7 @@ def prepare_response(request: dict[str, Any], payload: dict[str, Any]) -> dict[s
         if isinstance(raw, str):
             raw = [s.strip() for s in raw.replace("，", ",").split(",") if s.strip()]
         if not isinstance(raw, list):
-            raise ValueError("excluded_ids 必须为编号列表")
+            raise ValueError("excluded_ids必须为编号列表")
         excluded = []
         for value in raw:
             key = by_number.get(str(value), str(value))

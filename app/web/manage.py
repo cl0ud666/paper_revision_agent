@@ -91,7 +91,7 @@ def main():
     elif args.action == "bootstrap":
         bootstrap()
     else:
-        password = getpass.getpass("新密码（至少 6 位）：")
+        password = getpass.getpass("新密码（至少6位）：")
         if password != getpass.getpass("再次输入："):
             raise SystemExit("两次密码不一致")
         if args.action == "reset-password":

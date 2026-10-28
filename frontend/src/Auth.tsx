@@ -46,9 +46,9 @@ export function Login() {
             </p>
           </div>
           <div className="story-steps">
-            <span>01 审查</span>
-            <span>02 确认</span>
-            <span>03 修订</span>
+            <span>01审查</span>
+            <span>02确认</span>
+            <span>03修订</span>
           </div>
         </div>
         <small>面向研究者的论文修改智能体</small>
@@ -88,7 +88,7 @@ export function Login() {
                 value={password}
                 disabled={submit.isPending}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder={register ? '至少 6 位' : '输入密码'}
+                placeholder={register ? '至少6位' : '输入密码'}
               />
             </label>
             {register && (

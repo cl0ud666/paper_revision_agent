@@ -1,21 +1,21 @@
 """
 成本与延迟预算。
 
-三个硬指标（都可以在 .env 里调）：
+三个硬指标（都可以在 .env里调）：
 
-1. **每任务 token 上限**：整次任务（含多轮）用掉多少 token；
-2. **每轮 token 上限**：单轮（一次修改循环）的消耗；
+1. **每任务token上限**：整次任务（含多轮）用掉多少token；
+2. **每轮token上限**：单轮（一次修改循环）的消耗；
 3. **墙钟上限**：整次任务允许跑多久。
 
-另外还有“每个 Agent 的调用次数上限”，用来兜住异常情况
-（例如文档被切得太碎，Audit 一个分块一个分块地烧钱）。
+另外还有“每个Agent的调用次数上限”，用来兜住异常情况
+（例如文档被切得太碎，Audit一个分块一个分块地烧钱）。
 
-用量从 ``data/runs/<run_id>/trace.jsonl`` 实时汇总，因此：
+用量从``data/runs/<run_id>/trace.jsonl``实时汇总，因此：
 
 - 不需要额外的计数器，重启进程也不会丢；
 - 观测到的数字就是报告里展示的数字。
 
-超预算的处理方式是**降级而不是崩溃**：调用方捕获 BudgetExceeded 后
+超预算的处理方式是**降级而不是崩溃**：调用方捕获BudgetExceeded后
 收尾当前工作（保留已完成的部分），并让流程尽快走到报告。
 """
 
@@ -51,7 +51,7 @@ def _elapsed_seconds(started_at: str) -> float:
 
 
 def usage(state: Any) -> dict[str, Any]:
-    """当前用量（token / 耗时 / 各 Agent 调用次数）。"""
+    """当前用量（token / 耗时 / 各Agent调用次数）。"""
 
     settings = get_settings()
     run_id = state.get("run_id") or "adhoc"
@@ -65,7 +65,7 @@ def usage(state: Any) -> dict[str, Any]:
     elapsed = _elapsed_seconds(started_at)
     policy = get_policy(run_id)
     if policy is not None:
-        # Web 人工闸门可能等待数天，预算只计算实际后台执行时间。
+        # Web人工闸门可能等待数天，预算只计算实际后台执行时间。
         elapsed = policy.elapsed_seconds()
     turn_started_at = state.get("turn_started_at") or started_at
     turn_elapsed = _elapsed_seconds(turn_started_at)
@@ -101,9 +101,9 @@ def check(state: Any, *, agent: str = "", stage: str = "") -> dict[str, Any]:
 
     reason = ""
     if budget.max_run_tokens and snapshot["used_tokens"] >= budget.max_run_tokens:
-        reason = f"任务 token 预算已用尽（{snapshot['used_tokens']}/{budget.max_run_tokens}）"
+        reason = f"任务token预算已用尽（{snapshot['used_tokens']}/{budget.max_run_tokens}）"
     elif budget.max_turn_tokens and snapshot["used_tokens"] >= budget.max_turn_tokens:
-        reason = f"本轮 token 预算已用尽（{snapshot['used_tokens']}/{budget.max_turn_tokens}）"
+        reason = f"本轮token预算已用尽（{snapshot['used_tokens']}/{budget.max_turn_tokens}）"
     elif budget.max_run_seconds and snapshot["elapsed_seconds"] >= budget.max_run_seconds:
         reason = (
             f"任务时间预算已用尽（{snapshot['elapsed_seconds']}s / {budget.max_run_seconds:.0f}s）"
@@ -126,7 +126,7 @@ def check(state: Any, *, agent: str = "", stage: str = "") -> dict[str, Any]:
 
 
 def exceeded_snapshot(state: Any, exc: BudgetExceeded) -> dict[str, Any]:
-    """把一次超预算转成写进 State 的记录。"""
+    """把一次超预算转成写进State的记录。"""
 
     snapshot = dict(exc.snapshot or usage(state))
     snapshot["exceeded"] = True

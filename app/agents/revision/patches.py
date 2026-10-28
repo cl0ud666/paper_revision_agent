@@ -25,7 +25,7 @@ _UNIFY_RE = re.compile(r"全文统一为\s*[「\"'“]?([^\s」\"'”，,。；;
 
 
 def _unification_targets(rules: Any) -> list[str]:
-    """从用户要求里取出「全文统一为 X」里的目标写法 X。"""
+    """从用户要求里取出「全文统一为X」里的目标写法X。"""
 
     targets: list[str] = []
     for rule in rules or []:
@@ -42,7 +42,7 @@ def _unique_quote(text: str, start: int, end: int, token: str) -> str:
     """
     给某一次出现造一个"在段落里唯一"的引用片段。
 
-    补丁要求 quote 在段落内唯一，否则会被判"出现多次、无法判断改哪一处"。
+    补丁要求quote在段落内唯一，否则会被判"出现多次、无法判断改哪一处"。
     同一个词在一段里出现两次时，就向两侧扩窗，直到这个片段唯一、
     且**只包含这一处**该词为止。
     """
@@ -59,15 +59,15 @@ def _unique_quote(text: str, start: int, end: int, token: str) -> str:
 
 def _unification_patches(spans: list[Span], rules: Any) -> list[Patch]:
     """
-    用户定了「全文统一为 X」之后，**由程序**把全文替换一遍。
+    用户定了「全文统一为X」之后，**由程序**把全文替换一遍。
 
     为什么不交给模型：
 
-    - 位置要**穷尽**（这篇论文里 MoCo 有 40+ 处），模型在长文里列不全；
+    - 位置要**穷尽**（这篇论文里MoCo有40+ 处），模型在长文里列不全；
     - 词级替换的正确性**完全可判定**（就是字符串替换），不需要模型判断；
     - 模型会连代码里的常量名一起改（`MOCO_QUEUE_SIZE`），而**代码一律不碰**。
 
-    所以：口径来自用户在闸门上的选择（agent 的判断），
+    所以：口径来自用户在闸门上的选择（agent的判断），
     执行由程序完成（穷尽、确定、零成本）。
     """
 
@@ -125,7 +125,7 @@ def _drop_noop_patches(
     """
     丢掉"修改前后一模一样"的补丁。
 
-    模型有时会提一条 replace 和 quote 逐字相同的补丁——等于什么都没改。
+    模型有时会提一条replace和quote逐字相同的补丁——等于什么都没改。
     它既不该出现在用户的清单里（清单里全是"要改什么"），
     更不该被显示成"**无法定位**"：那三个字会让人以为定位失败，
     而实际上压根没有改动可定位。这类补丁直接丢掉，只在日志里留一句计数。
@@ -151,8 +151,8 @@ def _drop_code_patches(
 
     论文里的代码是"印刷出来的清单"，工具读到的是抽取文本：上下文往往不全
     （例如模块级常量根本没写进论文），它没有能力判断代码对不对。
-    让它去"顺手修 bug"，结果是拿猜测去改正确的代码——
-    而且代码段里有换行，改回 Word 也写不进去。所以代码一律不动。
+    让它去"顺手修bug"，结果是拿猜测去改正确的代码——
+    而且代码段里有换行，改回Word也写不进去。所以代码一律不动。
     """
 
     by_id = {span.id: span for span in spans}
@@ -212,7 +212,7 @@ def _build_summary(
     failed_batches: int,
     budget_stopped: bool,
 ) -> str:
-    """给 Review 与报告使用的摘要。"""
+    """给Review与报告使用的摘要。"""
 
     stats = summarize_patches(patches)
     lines = [

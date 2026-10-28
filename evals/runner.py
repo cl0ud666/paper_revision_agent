@@ -3,13 +3,13 @@
 
 流程：
 
-    Golden Set 中的每条样本
+    Golden Set中的每条样本
         ↓
-    跑一遍完整 Workflow（Audit → Human（自动批准）→ Revision → Review）
+    跑一遍完整Workflow（Audit → Human（自动批准）→ Revision → Review）
         ↓
-    LLM-as-Judge 对“修改前 / 修改后”按四个维度打分
+    LLM-as-Judge对“修改前 / 修改后”按四个维度打分
         ↓
-    汇总成评测结果 JSON（带系统指纹，供回归比较）
+    汇总成评测结果JSON（带系统指纹，供回归比较）
 
 用法::
 
@@ -230,15 +230,15 @@ def format_summary(result: dict[str, Any]) -> str:
     for dimension, score in aggregate_data["dimensions"].items():
         lines.append(f"  {dimension}：{score}")
     lines.append(f"  综合平均分：{aggregate_data['overall']}")
-    lines.append(f"  Review 通过率：{aggregate_data['review_pass_rate']}")
+    lines.append(f"  Review通过率：{aggregate_data['review_pass_rate']}")
     lines.append(f"  原意保持率：{aggregate_data['meaning_preserved_rate']}")
     return "\n".join(lines)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="论文修改系统评测（Golden Set + LLM-as-Judge）")
-    parser.add_argument("--limit", type=int, default=None, help="只评测前 N 条")
-    parser.add_argument("--tag", type=str, default="", help="本次评测的标签（例如 prompt-v2）")
+    parser.add_argument("--limit", type=int, default=None, help="只评测前N条")
+    parser.add_argument("--tag", type=str, default="", help="本次评测的标签（例如prompt-v2）")
     parser.add_argument("--output", type=str, default="", help="结果文件路径")
     parser.add_argument("--golden", type=str, default="", help="黄金集路径")
     return parser.parse_args(argv)

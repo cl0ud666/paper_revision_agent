@@ -97,8 +97,9 @@ export function Detail() {
             <span className="eyebrow">READY TO REVIEW</span>
             <div className="result-heading">
               <h2>
-                你的修订文件已就绪，所有修订及未能写进去的修订均已在修订版 Word
-                里面添加了批注，可点击审阅-显示标记的最终状态进行查看。
+                {
+                  '你的修订文件已就绪，所有修订及未能写进去的修订均已在修订版Word里面添加了批注，可点击审阅-显示标记的最终状态进行查看。'
+                }
               </h2>
             </div>
             <p>
@@ -108,7 +109,7 @@ export function Detail() {
             <div className="button-row">
               <a className="primary" href={`/api/v1/runs/${id}/download`}>
                 <Download size={17} />
-                下载修订版 Word
+                下载修订版Word
               </a>
             </div>
           </div>

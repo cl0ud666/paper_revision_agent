@@ -85,7 +85,7 @@ def render_pages(source_path, directory):
         os.getenv("PRA_LIBREOFFICE") or shutil.which("soffice") or shutil.which("libreoffice")
     )
     if not executable:
-        raise ValueError("分页预览不可用：未安装 LibreOffice，未定位的修改不会写入")
+        raise ValueError("分页预览不可用：未安装LibreOffice，未定位的修改不会写入")
     cache.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="pra-preview-") as folder:
         root = Path(folder)
@@ -120,7 +120,7 @@ def render_pages(source_path, directory):
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            raise ValueError("原文分页转换失败或超过 120 秒，未定位的修改不会写入") from exc
+            raise ValueError("原文分页转换失败或超过120秒，未定位的修改不会写入") from exc
         pdf = root / "original.pdf"
         if proc.returncode or not pdf.is_file() or pdf.stat().st_size > 80 * 1024 * 1024:
             raise ValueError("原文分页转换失败或文件超限，未定位的修改不会写入")
@@ -128,7 +128,7 @@ def render_pages(source_path, directory):
         pixels = total_bytes = 0
         with pdfplumber.open(pdf) as document:
             if len(document.pages) > 150:
-                raise ValueError("论文超过 150 页预览上限，未定位的修改不会写入")
+                raise ValueError("论文超过150页预览上限，未定位的修改不会写入")
             for number, page in enumerate(document.pages, 1):
                 width, height = float(page.width), float(page.height)
                 pixels += width * height * (96 / 72) ** 2
@@ -276,7 +276,7 @@ def prepare_visual_review(state, run_dir):
     try:
         source = DocxSource(Path(state["source_docx"]).read_bytes())
         if source.text != original:
-            raise ValueError("原始 Word 与审查文本版本不一致，已停止自动写入")
+            raise ValueError("原始Word与审查文本版本不一致，已停止自动写入")
         data, _ = render_pages(state["source_docx"], Path(run_dir) / "preview")
         preview.update({"pages": data["pages"], "fingerprint": data["fingerprint"]})
     except Exception as exc:
@@ -314,7 +314,7 @@ def prepare_visual_review(state, run_dir):
                     "operation"
                 ) in {"add_column", "delete_column", "merge_cells", "split_cell"}:
                     patch["review_note"] = (
-                        "此项会改变表格网格，并添加操作批注；请在网页取消勾选以保留原文。暂不支持在 Word 中按文字修订方式单独拒绝该网格操作。"
+                        "此项会改变表格网格，并添加操作批注；请在网页取消勾选以保留原文。暂不支持在Word中按文字修订方式单独拒绝该网格操作。"
                     )
             else:
                 _locate(patch, source=source, spans=spans, text=original)

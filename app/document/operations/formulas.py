@@ -41,4 +41,4 @@ def formula_xml(latex):
             raise ValueError("公式包含转换器未识别的命令")
         return math
     except Exception as exc:
-        raise ValueError(f"公式无法可靠转为原生 Word 公式：{exc}") from exc
+        raise ValueError(f"公式无法可靠转为原生Word公式：{exc}") from exc

@@ -21,7 +21,7 @@ def _normalize_issue(
     chunk: list[Span],
     document: str,
 ) -> dict[str, Any] | None:
-    """规范化一条问题，并把段落标签解析成稳定 ID。"""
+    """规范化一条问题，并把段落标签解析成稳定ID。"""
 
     if not isinstance(item, dict):
         return None
@@ -44,7 +44,7 @@ def _normalize_issue(
     if kind not in ("fix", "decision", "advice"):
         kind = "fix"
 
-    # decision 类给出可选项，让作者直接挑一个，不用自己组织语言
+    # decision类给出可选项，让作者直接挑一个，不用自己组织语言
     raw_options = item.get("options") or []
     options: list[str] = []
     if isinstance(raw_options, list):
@@ -53,8 +53,8 @@ def _normalize_issue(
             if text:
                 options.append(text)
 
-    # 矛盾的另一端：矛盾常常"报在 A、要改 B"（例如报在参数表 T10、要改正文 P183）。
-    # 把另一处的段落 ID 一起带上，Revision 才能把那段正文放进上下文去改。
+    # 矛盾的另一端：矛盾常常"报在A、要改B"（例如报在参数表T10、要改正文P183）。
+    # 把另一处的段落ID一起带上，Revision才能把那段正文放进上下文去改。
     raw_others = item.get("other_labels") or item.get("other") or []
     if isinstance(raw_others, str):
         raw_others = [piece.strip() for piece in raw_others.replace("，", ",").split(",")]
@@ -80,7 +80,7 @@ def _normalize_issue(
     label = str(item.get("span_label") or item.get("span_id") or "").strip()
     span = resolve_span(chunk, span_id=label, label=label)
 
-    # 标签没写对时，退一步：按 evidence 找到它所在的块
+    # 标签没写对时，退一步：按evidence找到它所在的块
     if span is None and evidence:
         for candidate in chunk:
             if evidence and evidence in candidate.text:
@@ -157,7 +157,7 @@ def _merge_issues(
             if not duplicate.get(key) and issue.get(key):
                 duplicate[key] = issue[key]
         # 同一条问题在不同地方被报出来时，把**位置并集**：
-        # 全篇审核补充的位置和分块报的位置合到一起，Revision 才不会只改一处。
+        # 全篇审核补充的位置和分块报的位置合到一起，Revision才不会只改一处。
         labels: list[str] = []
         for source in (duplicate, issue):
             for label in [source.get("span_label")] + list(source.get("span_labels") or []):
@@ -184,10 +184,10 @@ def _screen(
     """
     审查后处理（这一步直接决定"会不会给一篇好论文报一堆问题"）：
 
-    1. **逐字核对证据**：evidence 在对应段落里找不到 → 丢弃（防幻觉/防错位）；
+    1. **逐字核对证据**：evidence在对应段落里找不到 → 丢弃（防幻觉/防错位）；
     2. **同类系统性问题聚合**：同分类且问题描述高度相似的多条 → 合并成一条，
-       并列出涉及的所有段落（"参考文献格式不统一（共 12 处：P581、P582…）"）；
-    3. **严重程度门槛**：默认丢掉 low（可改可不改）；
+       并列出涉及的所有段落（"参考文献格式不统一（共12处：P581、P582…）"）；
+    3. **严重程度门槛**：默认丢掉low（可改可不改）；
     4. **总量上限**：超过上限时按严重程度截断。
     """
 
@@ -212,7 +212,7 @@ def _screen(
             meta["code_skipped"] += 1
             continue
         # 代码段不自动改：工具读到的是抽取文本，上下文不全，判断不了代码对错。
-        # 但也不丢——降级成"建议"，只在 Word 里留一条批注给作者看。
+        # 但也不丢——降级成"建议"，只在Word里留一条批注给作者看。
         if looks_like_code(span.text):
             meta["code_skipped"] += 1
             if re.search(
@@ -222,7 +222,7 @@ def _screen(
                 continue
             issue["kind"] = "advice"
             kind = "advice"
-        # 建议类不要求逐字引用原文（"建议补充 X 的来源"这种本来就没有可引的句子），
+        # 建议类不要求逐字引用原文（"建议补充X的来源"这种本来就没有可引的句子），
         # 但仍然要求定位到段落，批注才有地方挂。
         # 程序生成的条目（术语变体扫描）没有"逐字引用"这种东西——
         # 它的依据就是扫描结果本身，不该被逐字核对丢掉。
@@ -253,7 +253,7 @@ def _screen(
 
 
 def _merge_systematic(issues: list[dict[str, Any]], meta: dict[str, int]) -> list[dict[str, Any]]:
-    """把"同一类系统性毛病"合并成一条，避免同一个毛病被报 N 次。"""
+    """把"同一类系统性毛病"合并成一条，避免同一个毛病被报N次。"""
 
     from app.document.terminology import style_concept
 

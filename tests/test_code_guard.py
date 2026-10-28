@@ -3,7 +3,7 @@
 
 为什么单独做一条机械规则：工具读到的是**抽取出来的文本**，上下文往往不全
 （模块级常量、被引用的定义常常根本没写进论文），它没有能力判断代码对不对。
-让它"顺手修 bug"，结果就是拿猜测去改正确的代码。
+让它"顺手修bug"，结果就是拿猜测去改正确的代码。
 """
 
 from __future__ import annotations
@@ -168,7 +168,7 @@ class TestRevisionSkipsCode(CodeSkippingTestCase):
             revision_agent._drop_code_patches([patch], [span], notes, lambda message: None), []
         )
         self.assertEqual(len(notes), 1)
-        # 旧 Checkpoint 里已经接受的补丁也要在真正改文档前再拦一次。
+        # 旧Checkpoint里已经接受的补丁也要在真正改文档前再拦一次。
         stale = Patch(
             "patch-002",
             span.id,

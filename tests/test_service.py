@@ -1,7 +1,7 @@
 """
 服务层测试：后台执行、人工确认暂停/恢复、状态落盘、跨进程恢复。
 
-全部使用假 LLM，不联网。
+全部使用假LLM，不联网。
 """
 
 from __future__ import annotations
@@ -161,7 +161,7 @@ class TestRunLifecycle(ServiceTestCase):
         self.assertTrue(snapshot["pending"]["patches"][0]["rationale"])
         self.assertGreaterEqual(snapshot["event_cursor"], 2)
 
-        # 只勾选接受第 1 条补丁
+        # 只勾选接受第1条补丁
         session.resume({"accepted_ids": ["patch-001"]})
         wait_for(session, {STATUS_COMPLETED})
 
@@ -203,7 +203,7 @@ class TestRunLifecycle(ServiceTestCase):
         self.assertEqual(second["events"], [])
         self.assertEqual(second["cursor"], first["cursor"])
 
-        # 事件里有 Agent 维度信息，前端可以直接画时间线
+        # 事件里有Agent维度信息，前端可以直接画时间线
         agents = {event.get("agent") for event in first["events"] if event["type"] == "agent"}
         self.assertIn("audit", agents)
         self.assertIn("revision", agents)
@@ -226,7 +226,7 @@ class TestRunLifecycle(ServiceTestCase):
 
         session = manager.create(self.options(), run_id="paper-test-limit")
         session.start()
-        # start() 之后状态立刻变成 running，此时不允许再提交新任务
+        # start() 之后状态立刻变成running，此时不允许再提交新任务
         with self.assertRaises(RunStateError):
             manager.create(self.options(), run_id="paper-test-limit-2")
         # 等它停下来等人确认后，模型不再被占用，可以提交新任务
@@ -257,7 +257,7 @@ class TestPersistence(ServiceTestCase):
         self.assertEqual(len(state["audit_findings"]), 1)
 
     def test_recover_after_restart_and_resume(self) -> None:
-        """模拟服务重启：新进程里恢复任务并继续（依赖 SQLite Checkpoint）。"""
+        """模拟服务重启：新进程里恢复任务并继续（依赖SQLite Checkpoint）。"""
 
         manager = RunManager()
         session = manager.create(self.options(), run_id="paper-test-restart")
@@ -279,7 +279,7 @@ class TestPersistence(ServiceTestCase):
         self.assertTrue(recovered.pending["patches"][0]["rationale"])
         self.assertIn(ISSUE_SENTENCE, recovered.document_text())
 
-        # 继续执行（Harness 用同一个 thread_id + 同一个 SQLite Checkpoint）
+        # 继续执行（Harness用同一个thread_id + 同一个SQLite Checkpoint）
         recovered.resume({"accept_all": True})
         wait_for(recovered, {STATUS_COMPLETED})
         self.assertIn(IMPROVED_SENTENCE, recovered.document_text())
@@ -290,7 +290,7 @@ class TestPersistence(ServiceTestCase):
         session.start()
         wait_for(session, {STATUS_COMPLETED})
 
-        # 另开一个 manager（模拟重启）后仍能列出历史任务
+        # 另开一个manager（模拟重启）后仍能列出历史任务
         runs = RunManager().list_runs()
         ids = [item["run_id"] for item in runs]
         self.assertIn("paper-test-list", ids)

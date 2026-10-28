@@ -1,15 +1,15 @@
 """
-Orchestrator Agent：初始规划 + Review FAIL 后的自适应重规划。
+Orchestrator Agent：初始规划 + Review FAIL后的自适应重规划。
 
 它只在两个时间点被调用：
 
 1. **Initial Planning**：任务开始时判断执行路径（全文审查 / 直接修改）；
-2. **Adaptive Re-planning**：Review 判定 FAIL 时，基于当前 State 重新决定下一步。
+2. **Adaptive Re-planning**：Review判定FAIL时，基于当前State重新决定下一步。
 
-因此正常路径是稳定的固定流程，只有异常情况才会重新唤起 Planner，
+因此正常路径是稳定的固定流程，只有异常情况才会重新唤起Planner，
 避免每一步都调用高成本模型。
 
-LLM 不可用时，会退化为确定性的规则规划（保证 Workflow 不会因为一次
+LLM不可用时，会退化为确定性的规则规划（保证Workflow不会因为一次
 规划失败而整体崩掉）。
 """
 
@@ -126,7 +126,7 @@ def plan(
     logger: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """
-    进行一次规划，返回需要写回 State 的字段。
+    进行一次规划，返回需要写回State的字段。
     """
 
     log = logger or print
@@ -165,9 +165,9 @@ def plan(
         )
         return _normalize(data, state, is_replan=is_replan, log=log)
     except Exception as exc:  # noqa: BLE001 - 规划失败必须降级而不是崩溃
-        log(f"[Orchestrator] LLM 规划不可用（{type(exc).__name__}: {exc}），改用规则规划。")
+        log(f"[Orchestrator] LLM规划不可用（{type(exc).__name__}: {exc}），改用规则规划。")
         result = fallback_plan(state)
-        result["plan_reason"] = f"{result['plan_reason']}（LLM 规划不可用：{exc}）"
+        result["plan_reason"] = f"{result['plan_reason']}（LLM规划不可用：{exc}）"
         return result
 
 
@@ -190,7 +190,7 @@ def _normalize(
     is_replan: bool,
     log: Callable[[str], None],
 ) -> dict[str, Any]:
-    """校验并规范化 LLM 返回的规划结果。"""
+    """校验并规范化LLM返回的规划结果。"""
 
     next_action = str(data.get("next_action", "")).strip().lower()
     if next_action not in ROUTE_ACTIONS:
@@ -250,9 +250,9 @@ def _default_steps(next_action: str) -> list[str]:
 
 def fallback_plan(state: Any) -> dict[str, Any]:
     """
-    确定性兜底规划（不依赖 LLM）。
+    确定性兜底规划（不依赖LLM）。
 
-    当模型不可用、输出非法或超时时使用，保证 Workflow 仍能推进。
+    当模型不可用、输出非法或超时时使用，保证Workflow仍能推进。
     """
 
     iteration = int(state.get("iteration", 0))
@@ -277,7 +277,7 @@ def fallback_plan(state: Any) -> dict[str, Any]:
             "next_instructions": request,
         }
 
-    # ---------- Review FAIL 之后的重新规划 ----------
+    # ---------- Review FAIL之后的重新规划 ----------
     if review_result and iteration > 0:
         if iteration >= max_iterations:
             return _result(
@@ -289,20 +289,20 @@ def fallback_plan(state: Any) -> dict[str, Any]:
         if remaining or approved:
             return _result(
                 "revision",
-                "Review 仍有未解决问题，继续执行修改。",
-                ["针对 Review 的剩余问题再次修改", "重新交给 Review 复核"],
+                "Review仍有未解决问题，继续执行修改。",
+                ["针对Review的剩余问题再次修改", "重新交给Review复核"],
                 kind="replan",
             )
         if state.get("audit_failed"):
             return _result(
                 "report",
-                "Audit 未能正常工作，无法继续，输出当前结果。",
+                "Audit未能正常工作，无法继续，输出当前结果。",
                 ["输出当前结果"],
                 kind="replan",
             )
         return _result(
             "audit",
-            "Review 无法给出可执行结论，重新做一次系统性审查。",
+            "Review无法给出可执行结论，重新做一次系统性审查。",
             ["重新审查论文"],
             kind="replan",
         )
@@ -340,7 +340,7 @@ def fallback_plan(state: Any) -> dict[str, Any]:
     return _result(
         "revision",
         "用户已给出明确的修改要求，直接执行修改。",
-        ["按用户要求直接修改", "交给 Review 复核"],
+        ["按用户要求直接修改", "交给Review复核"],
         kind="direct_revision",
     )
 

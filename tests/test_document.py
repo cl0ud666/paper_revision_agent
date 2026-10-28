@@ -1,5 +1,5 @@
 """
-文档模型测试：段落/句子稳定 ID、补丁定位与校验、逐条接受/拒绝、一次性应用。
+文档模型测试：段落/句子稳定ID、补丁定位与校验、逐条接受/拒绝、一次性应用。
 """
 
 from __future__ import annotations
@@ -170,7 +170,7 @@ class TestPatchValidation(unittest.TestCase):
     def test_duplicate_quote_inside_span_is_conflict_but_cross_span_is_fine(self) -> None:
         text = "## 摘要\n\n方法有效。方法有效。\n\n## 结论\n\n方法有效。\n"
         spans = build_spans(text)
-        duplicate_span, unique_span = spans[1], spans[3]  # 两个段落（0/2 是标题）
+        duplicate_span, unique_span = spans[1], spans[3]  # 两个段落（0/2是标题）
 
         ambiguous = validate_patch(
             patch_from_model(
@@ -218,8 +218,8 @@ class TestStructureMarkers(unittest.TestCase):
     """
     排版标记（### / - / |）是文档结构，不是正文。
 
-    模型很容易把送审文本里的 ``### 3.3.5 对比损失函数优化`` 当成正文抄进修改结果，
-    结果标题变成 ``### ### 3.3.5 …``，或者在 Word 里多出真实的 "###" 字符。
+    模型很容易把送审文本里的``### 3.3.5对比损失函数优化``当成正文抄进修改结果，
+    结果标题变成``### ### 3.3.5 …``，或者在Word里多出真实的 "###" 字符。
     这里验证补丁进来时就被剥掉，并且**最终文本只保留一个标记**。
     """
 

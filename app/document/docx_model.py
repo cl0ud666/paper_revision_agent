@@ -1,28 +1,28 @@
 """
-Word (.docx) 的结构化读取层：**文字 + XML 锚点**。
+Word (.docx) 的结构化读取层：**文字 + XML锚点**。
 
 为什么需要它：
 
 现在的流程是「docx -> 一坨文字 -> 改文字 -> 输出文字」。文字改对了，
 但原文件里的版式、字体、编号、图表、公式**在读取那一刻就丢了**，
-所以没法把改动写回 Word。
+所以没法把改动写回Word。
 
 这一层解决的问题是：论文里的每一段文字，都能回答
-**"它在 document.xml 里对应哪个 <w:t>，从第几个字到第几个字"**。
-有了这个对应关系，回写层就能只动那一段的 XML，其余内容原样不动。
+**"它在document.xml里对应哪个 <w:t>，从第几个字到第几个字"**。
+有了这个对应关系，回写层就能只动那一段的XML，其余内容原样不动。
 
 关键设计：
 
-1. **偏移即契约**：``DocxSource.text`` 必须与 ``app.utils.loaders`` 读出来的
+1. **偏移即契约**：``DocxSource.text``必须与``app.utils.loaders``读出来的
    文字**逐字节相同**（同一份代码生成，所以不会漂移），
    于是段落解析（spans）算出来的字符偏移可以直接用到本文档的映射上。
-2. **装饰是空隙**：Markdown 的 ``# `` / ``- `` / ``| --- |`` 是解析器加的，
-   原文件里并不存在，因此它们在映射里被记为 ``gap``，不属于任何 XML 节点。
+2. **装饰是空隙**：Markdown的``# `` / ``- `` / ``| --- |``是解析器加的，
+   原文件里并不存在，因此它们在映射里被记为``gap``，不属于任何XML节点。
    补丁如果落在空隙上，回写层会拒绝它（而不是猜）。
-3. **公式/换行/图片只标记不改**：公式（OMML）用 ``【公式：…】`` 占位，
+3. **公式/换行/图片只标记不改**：公式（OMML）用``【公式：…】``占位，
    换行、制表符、图形对象都如实登记；回写层据此判断"这一刀能不能动"。
-4. **接受全部修订后的视图**：已经带 ``<w:del>`` 的旧内容不计入文字，
-   所以读出来的文字 == 用户在 Word 里点"全部接受"之后看到的样子。
+4. **接受全部修订后的视图**：已经带``<w:del>``的旧内容不计入文字，
+   所以读出来的文字 == 用户在Word里点"全部接受"之后看到的样子。
 """
 
 from __future__ import annotations
@@ -45,25 +45,25 @@ CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
 
 
 def w(tag: str) -> str:
-    """WordprocessingML 标签的 Clark 记法。"""
+    """WordprocessingML标签的Clark记法。"""
 
     return f"{{{W_NS}}}{tag}"
 
 
 def m(tag: str) -> str:
-    """数学（OMML）标签的 Clark 记法。"""
+    """数学（OMML）标签的Clark记法。"""
 
     return f"{{{M_NS}}}{tag}"
 
 
 def r_ns(tag: str) -> str:
-    """关系（r:）标签的 Clark 记法。"""
+    """关系（r:）标签的Clark记法。"""
 
     return f"{{{R_NS}}}{tag}"
 
 
 class DocxUnavailable(RuntimeError):
-    """缺少解析 .docx 所需的库（lxml）。"""
+    """缺少解析 .docx所需的库（lxml）。"""
 
 
 def _require_lxml() -> Any:
@@ -71,7 +71,7 @@ def _require_lxml() -> Any:
         from lxml import etree  # type: ignore
     except ImportError as exc:  # pragma: no cover - 取决于运行环境
         raise DocxUnavailable(
-            "写回 Word 需要 lxml（pip install lxml，或 pip install python-docx 会一起装上）。"
+            "写回Word需要lxml（pip install lxml，或pip install python-docx会一起装上）。"
         ) from exc
     return etree
 
@@ -82,16 +82,16 @@ def _require_lxml() -> Any:
 @dataclass
 class Piece:
     """
-    段落文字里的一小段，以及它在 XML 里的来源。
+    段落文字里的一小段，以及它在XML里的来源。
 
-    ``start`` / ``end`` 是相对**所属块文本**的偏移（不是相对 XML）。
+    ``start`` / ``end``是相对**所属块文本**的偏移（不是相对XML）。
     """
 
     start: int
     end: int
     kind: str  # text / math / break / tab / object / gap
     rendered: str
-    # rendered 对应 node.text 里的哪一段（裁剪后 rendered 可能是 node.text 的一部分）
+    # rendered对应node.text里的哪一段（裁剪后rendered可能是node.text的一部分）
     node_offset: int = 0
     node: Any = None
     run: Any = None
@@ -142,7 +142,7 @@ _HEADING_RE = re.compile(r"(?:heading|标题)\s*([1-9])", re.IGNORECASE)
 
 
 def paragraph_to_markdown(text: str, style: str) -> str:
-    """把 Word 段落样式映射成 Markdown（下游靠这些标记切块）。"""
+    """把Word段落样式映射成Markdown（下游靠这些标记切块）。"""
 
     name = (style or "").strip()
     lowered = name.lower()
@@ -166,7 +166,7 @@ def paragraph_prefix(text: str, style: str) -> str:
 
 
 def style_id_to_name(style_id: str) -> str:
-    """docx 里的 pStyle 是样式 ID（Heading1 / 1 / a3），转成可读名字。"""
+    """docx里的pStyle是样式ID（Heading1 / 1 / a3），转成可读名字。"""
 
     match = re.match(r"^[Hh]eading([1-9])$", style_id or "")
     if match:
@@ -180,11 +180,11 @@ def style_id_to_name(style_id: str) -> str:
 
 def _read_style_names(styles_xml: bytes | None) -> dict[str, str]:
     """
-    读 word/styles.xml，把 styleId 解析成样式名。
+    读word/styles.xml，把styleId解析成样式名。
 
-    为什么必须做：中文 Word / WPS 常常把"标题 1"的 styleId 写成 ``1``、``a3``
-    这类编号，只看 ID 是认不出标题的；而认不出标题，段落分区、
-    审查范围、Markdown 结构就全是错的。
+    为什么必须做：中文Word / WPS常常把"标题1"的styleId写成``1``、``a3``
+    这类编号，只看ID是认不出标题的；而认不出标题，段落分区、
+    审查范围、Markdown结构就全是错的。
     """
 
     if not styles_xml:
@@ -209,7 +209,7 @@ def _read_style_names(styles_xml: bytes | None) -> dict[str, str]:
 
 
 def _math_text(element: Any) -> str:
-    """取 OMML 公式里的可见文字。"""
+    """取OMML公式里的可见文字。"""
 
     return "".join(node.text or "" for node in element.iter(m("t"))).strip()
 
@@ -219,10 +219,10 @@ _OBJECT_TAGS = {w("drawing"), w("pict"), w("object"), w("fldChar"), w("sectPr")}
 
 def _iter_paragraph_content(node: Any) -> Iterator[tuple[str, Any, str]]:
     """
-    按文档顺序产出段落里 ``(kind, element, rendered_text)``。
+    按文档顺序产出段落里``(kind, element, rendered_text)``。
 
-    - ``w:del`` 里的内容已经"被删除"，不算在文字里（返回的不是 delText）；
-    - ``m:oMathPara`` 只是容器，公式本身由里面的 ``m:oMath`` 产出，避免重复。
+    - ``w:del``里的内容已经"被删除"，不算在文字里（返回的不是delText）；
+    - ``m:oMathPara``只是容器，公式本身由里面的``m:oMath``产出，避免重复。
     """
 
     for child in node:
@@ -252,7 +252,7 @@ def _iter_paragraph_content(node: Any) -> Iterator[tuple[str, Any, str]]:
 
 
 class _TextBuilder:
-    """一边拼文字、一边记下每个字符来自哪个 XML 节点。"""
+    """一边拼文字、一边记下每个字符来自哪个XML节点。"""
 
     def __init__(self) -> None:
         self.parts: list[str] = []
@@ -261,7 +261,7 @@ class _TextBuilder:
         self.length = 0
 
     def decor(self, text: str) -> None:
-        """解析器加的装饰（Markdown 前缀、表格竖线）——不可编辑。"""
+        """解析器加的装饰（Markdown前缀、表格竖线）——不可编辑。"""
 
         self._append(text, "gap", None, None, None)
 
@@ -352,10 +352,10 @@ def _normalize_block(block: DocxBlock) -> None:
     把块的文本归一化成与整篇文档同一套规则，并把偏移一起搬到新坐标系。
 
     归一化会删字符（行尾空格、连续空行、首尾空白）。删了之后，块内每个
-    piece / obstacle 的旧偏移就不再指向同一段文字——所以这里用
-    ``normalize_with_map`` 拿到的位置映射，把它们逐个重算。
+    piece / obstacle的旧偏移就不再指向同一段文字——所以这里用
+    ``normalize_with_map``拿到的位置映射，把它们逐个重算。
 
-    只改数字，不碰任何 XML 节点。
+    只改数字，不碰任何XML节点。
     """
 
     raw = block.text
@@ -364,7 +364,7 @@ def _normalize_block(block: DocxBlock) -> None:
         return  # 绝大多数块走这条：零开销
 
     def remap(position: int) -> int:
-        # kept 单调不减：bisect_left 得到"第一个原下标 ≥ position 的保留字符"的新下标
+        # kept单调不减：bisect_left得到"第一个原下标 ≥ position的保留字符"的新下标
         return bisect.bisect_left(kept, position)
 
     pieces: list[Piece] = []
@@ -445,9 +445,9 @@ class _Cell:
 
 def _table_rows(table: Any) -> list[list[_Cell]]:
     """
-    把 ``<w:tbl>`` 读成"每行每格的文字 + 锚点"。
+    把``<w:tbl>``读成"每行每格的文字 + 锚点"。
 
-    直接在 XML 上遍历 ``w:tr / w:tc``，不用 python-docx 的行列展开：
+    直接在XML上遍历``w:tr / w:tc``，不用python-docx的行列展开：
     后者会把横向合并的单元格重复展开，导致同一段文字出现两次
     （回写时就无法判断到底该改哪一个）。
     """
@@ -481,11 +481,11 @@ def _table_rows(table: Any) -> list[list[_Cell]]:
 
 def _table_block(table: Any, *, index: int, label: str) -> DocxBlock | None:
     """
-    把 ``<w:tbl>`` 转成 Markdown 表格，**同时**记下每个单元格文字的锚点。
+    把``<w:tbl>``转成Markdown表格，**同时**记下每个单元格文字的锚点。
 
-    只有"落在同一个单元格里"的改动才能写回 Word；
+    只有"落在同一个单元格里"的改动才能写回Word；
     跨单元格的改动（例如重排整行）会被回写层拒绝并提示人工处理，
-    因为 Markdown 表格里的分隔符在 Word 里根本不存在，无法一一对应。
+    因为Markdown表格里的分隔符在Word里根本不存在，无法一一对应。
     """
 
     rows = _table_rows(table)
@@ -544,14 +544,14 @@ def _body_children(body: Any) -> Iterator[Any]:
 
 class DocxSource:
     """
-    一个 .docx 文件：既能读出"文字 + 锚点"，也能被回写层原地修改。
+    一个 .docx文件：既能读出"文字 + 锚点"，也能被回写层原地修改。
 
     用法::
 
         source = DocxSource(data)          # 读
-        source.text                        # 与 loaders 读出来的文字完全一致
+        source.text                        # 与loaders读出来的文字完全一致
         block = source.block_at(offset)    # 某个字符偏移落在哪个段落/表格
-        redline(source, patches, out_path) # 回写（见 docx_redline.py）
+        redline(source, patches, out_path) # 回写（见docx_redline.py）
     """
 
     def __init__(self, data: bytes) -> None:
@@ -568,7 +568,7 @@ class DocxSource:
             raise ValueError(f"这不是有效的 .docx：{exc}") from exc
 
         if "word/document.xml" not in self.parts:
-            raise ValueError("这个 .docx 里找不到 word/document.xml（正文缺失）。")
+            raise ValueError("这个 .docx里找不到word/document.xml（正文缺失）。")
 
         self.document_root = etree.fromstring(self.parts["word/document.xml"])
         self.styles = _read_style_names(self.parts.get("word/styles.xml"))
@@ -579,13 +579,13 @@ class DocxSource:
     # ---------- 读 ----------
 
     def rebuild(self) -> None:
-        """（重新）从 XML 建立"文字 + 锚点"，并算出每个块的扁平偏移。"""
+        """（重新）从XML建立"文字 + 锚点"，并算出每个块的扁平偏移。"""
 
         self.blocks = self._collect_blocks()
 
         # 归一化会**删字符**（行尾空白、连续空行、首尾空白）。所以必须先归一化
-        # **每个块的文本**、把 pieces/obstacles 的偏移一起搬过去，再按归一化后的
-        # 长度累加块偏移。否则块的 start/end 与 self.text 会对不上，
+        # **每个块的文本**、把pieces/obstacles的偏移一起搬过去，再按归一化后的
+        # 长度累加块偏移。否则块的start/end与self.text会对不上，
         # 补丁定位（block_at）就会拿到前一个块，误报"跨了文档结构"。
         for block in self.blocks:
             _normalize_block(block)
@@ -608,7 +608,7 @@ class DocxSource:
         """
         自检：每个块的偏移都必须能在扁平文本里原样取回它自己的文字。
 
-        正常情况下这里恒为空——`_normalize_block` 已经把偏移搬到了同一坐标系。
+        正常情况下这里恒为空——`_normalize_block`已经把偏移搬到了同一坐标系。
         真出现错位时，宁可把该块标成"只读不可回写"（让回写层拒绝），也不要改错。
         """
 
@@ -688,7 +688,7 @@ class DocxSource:
     # ---------- 写 ----------
 
     def flush(self) -> None:
-        """把内存里改过的 document.xml 写回 parts。"""
+        """把内存里改过的document.xml写回parts。"""
 
         self.parts["word/document.xml"] = self.etree.tostring(
             self.document_root,

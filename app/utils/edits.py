@@ -1,24 +1,24 @@
 """
-把 LLM 给出的“修改建议”安全地落到论文文本上。
+把LLM给出的“修改建议”安全地落到论文文本上。
 
-为什么不让 LLM 直接返回整篇新论文：
+为什么不让LLM直接返回整篇新论文：
 
 1. 长论文无法一次生成完整结果，容易丢内容；
-2. 直接覆盖无法确认“到底改了什么”，也不好做 Review 和报告；
+2. 直接覆盖无法确认“到底改了什么”，也不好做Review和报告；
 3. 一旦模型跑偏，整篇论文都被污染。
 
-所以 Revision Agent 只输出“定位 + 替换”的编辑指令：
+所以Revision Agent只输出“定位 + 替换”的编辑指令：
 
     {"issue_id": 2, "find": "<原文片段>", "replace": "<修改后片段>", "rationale": "..."}
 
-这里负责把 find 在原文中**真正定位到**并替换，匹配策略从严格到宽松：
+这里负责把find在原文中**真正定位到**并替换，匹配策略从严格到宽松：
 
-1. 精确匹配（唯一命中直接替换；多处命中时用 location 提示挑最近的）；
+1. 精确匹配（唯一命中直接替换；多处命中时用location提示挑最近的）；
 2. 归一化匹配（忽略空白与全/半角标点差异，再映射回原始位置）；
 3. 段落级模糊匹配（相似度 ≥ 阈值且唯一命中）。
 
-定位失败或存在歧义的编辑不会“硬改”，而是进入 failed 列表，
-交给 Review Agent 判断，避免污染原文。
+定位失败或存在歧义的编辑不会“硬改”，而是进入failed列表，
+交给Review Agent判断，避免污染原文。
 """
 
 from __future__ import annotations
@@ -101,7 +101,7 @@ def _occurrences(haystack: str, needle: str) -> list[int]:
 
 
 def _nearest_position(document: str, needle: str, hint: str) -> int:
-    """在多个命中里挑离 hint 最近的。"""
+    """在多个命中里挑离hint最近的。"""
 
     hint_index = document.find(hint) if hint else -1
     positions = _occurrences(document, needle)
@@ -141,7 +141,7 @@ def _paragraph_candidates(
 
 def find_span(document: str, needle: str, *, location: str = "") -> tuple[int, int, str]:
     """
-    定位 needle 在 document 中的区间。
+    定位needle在document中的区间。
 
     Returns:
         (start, end, strategy)；失败返回 (-1, -1, reason)
@@ -193,11 +193,11 @@ def locate_unique(text: str, needle: str) -> tuple[int, int, str]:
     """
     严格唯一的定位（补丁校验专用）。
 
-    与 :func:`find_span` 的区别：同一段文本里出现多次时**不猜**，
-    直接返回 ``ambiguous``；这样宁可不改，也不会改错地方。
+    与 :func:`find_span`的区别：同一段文本里出现多次时**不猜**，
+    直接返回``ambiguous``；这样宁可不改，也不会改错地方。
 
     Returns:
-        (start, end, strategy)，失败时 start/end 为 -1。
+        (start, end, strategy)，失败时start/end为 -1。
     """
 
     if not needle or not needle.strip():
@@ -233,7 +233,7 @@ def apply_edits(
     """
     顺序应用编辑指令。
 
-    每条编辑都要能在**当前**文档里定位到，否则进入 failed 列表。
+    每条编辑都要能在**当前**文档里定位到，否则进入failed列表。
     """
 
     result = EditApplication(document=document)

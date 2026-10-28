@@ -1,4 +1,4 @@
-"""Agent 层：Orchestrator / Audit / Revision / Review / Report。"""
+"""Agent层：Orchestrator / Audit / Revision / Review / Report。"""
 
 from app.agents.audit import run as run_audit
 from app.agents.orchestrator import plan as plan_task

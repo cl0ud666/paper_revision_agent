@@ -139,7 +139,7 @@ class TestRuleStore(unittest.TestCase):
 
 
 class TestCallObservability(unittest.TestCase):
-    """① 每次调用都要有输出：控制台一行摘要 + 落盘完整 Prompt/返回。"""
+    """① 每次调用都要有输出：控制台一行摘要 + 落盘完整Prompt/返回。"""
 
     def setUp(self) -> None:
         self._original_pra_env = {
@@ -187,7 +187,7 @@ class TestCallObservability(unittest.TestCase):
         self.assertGreater(record["total_tokens"], 0)
 
     def test_guard_prints_agent_activity(self) -> None:
-        """调用 Agent 时控制台要有可读的进展输出。"""
+        """调用Agent时控制台要有可读的进展输出。"""
 
         messages: list[str] = []
         guard = AgentGuard(

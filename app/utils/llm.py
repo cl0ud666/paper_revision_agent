@@ -1,14 +1,14 @@
 """
-LLM 调用封装。
+LLM调用封装。
 
 职责：
 
-1. 从 .env 读取 API Key，创建统一的 ChatModel 实例（默认 DeepSeek）；
-2. 提供 call_llm() 统一入口，返回带 Token 用量的 LLMResponse；
+1. 从 .env读取API Key，创建统一的ChatModel实例（默认DeepSeek）；
+2. 提供call_llm() 统一入口，返回带Token用量的LLMResponse；
 3. 支持测试注入（set_llm_factory），评测与单元测试不需要真实网络。
 
-重试 / 超时 / 熔断不在这里做，而是由 app.utils.resilience.AgentGuard 负责，
-这样“一次 LLM 调用”和“一个 Agent 步骤”的职责是分开的。
+重试 / 超时 / 熔断不在这里做，而是由app.utils.resilience.AgentGuard负责，
+这样“一次LLM调用”和“一个Agent步骤”的职责是分开的。
 """
 
 from __future__ import annotations
@@ -25,12 +25,12 @@ from app.utils.call_policy import get_policy
 
 
 class LLMConfigurationError(RuntimeError):
-    """LLM 配置问题（例如缺少 API Key）。"""
+    """LLM配置问题（例如缺少API Key）。"""
 
 
 @dataclass
 class LLMUsage:
-    """Token 用量。"""
+    """Token用量。"""
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -39,7 +39,7 @@ class LLMUsage:
 
 @dataclass
 class LLMResponse:
-    """一次 LLM 调用的结果。"""
+    """一次LLM调用的结果。"""
 
     text: str
     usage: LLMUsage = field(default_factory=LLMUsage)
@@ -51,13 +51,13 @@ class LLMResponse:
 _FACTORY: Callable[[str, dict[str, Any]], Any] | None = None
 _FACTORY_LOCK = threading.Lock()
 
-# 并发调用时（Audit 的分块并行）多个线程会同时往 llm_calls.jsonl 追加。
-# 一次写入是一整条 JSON（可能上万字符），没有锁就可能互相穿插成坏行。
+# 并发调用时（Audit的分块并行）多个线程会同时往llm_calls.jsonl追加。
+# 一次写入是一整条JSON（可能上万字符），没有锁就可能互相穿插成坏行。
 _LOG_LOCK = threading.Lock()
 
 
 def set_llm_factory(factory: Callable[[str, dict[str, Any]], Any] | None) -> None:
-    """注入自定义 LLM 工厂（单元测试 / 离线评测用）。"""
+    """注入自定义LLM工厂（单元测试 / 离线评测用）。"""
 
     global _FACTORY
     with _FACTORY_LOCK:
@@ -65,7 +65,7 @@ def set_llm_factory(factory: Callable[[str, dict[str, Any]], Any] | None) -> Non
 
 
 def reset_llm_factory() -> None:
-    """恢复真实 LLM。"""
+    """恢复真实LLM。"""
 
     set_llm_factory(None)
 
@@ -77,7 +77,7 @@ def get_chat_model(
     max_tokens: int | None = None,
     json_mode: bool | None = None,
 ) -> Any:
-    """创建一个 ChatModel 实例。"""
+    """创建一个ChatModel实例。"""
 
     settings = get_settings()
     json_mode = settings.llm.json_mode if json_mode is None else json_mode
@@ -99,10 +99,10 @@ def get_chat_model(
     api_key = settings.llm.api_key
     if not api_key:
         raise LLMConfigurationError(
-            f"没有找到环境变量 {settings.llm.api_key_env}，请在项目根目录的 .env 中配置。"
+            f"没有找到环境变量 {settings.llm.api_key_env}，请在项目根目录的 .env中配置。"
         )
 
-    # 延迟导入：没有装 langchain-openai 时，单元测试仍然可以运行
+    # 延迟导入：没有装langchain-openai时，单元测试仍然可以运行
     from langchain_openai import ChatOpenAI
 
     kwargs: dict[str, Any] = {
@@ -112,7 +112,7 @@ def get_chat_model(
         "temperature": temperature,
         "max_tokens": max_tokens,
         "timeout": settings.llm.timeout,
-        # 重试由 AgentGuard 统一负责，这里关闭 SDK 自带重试，避免重复放大请求
+        # 重试由AgentGuard统一负责，这里关闭SDK自带重试，避免重复放大请求
         "max_retries": 0,
     }
     if json_mode:
@@ -122,7 +122,7 @@ def get_chat_model(
 
 
 def message_text(message: Any) -> str:
-    """从 LangChain 消息对象中取出文本内容。"""
+    """从LangChain消息对象中取出文本内容。"""
 
     content = getattr(message, "content", message)
     if isinstance(content, str):
@@ -139,7 +139,7 @@ def message_text(message: Any) -> str:
 
 
 def usage_from_message(message: Any) -> LLMUsage:
-    """从消息对象中提取 Token 用量（兼容多种字段名）。"""
+    """从消息对象中提取Token用量（兼容多种字段名）。"""
 
     usage = getattr(message, "usage_metadata", None)
     if isinstance(usage, dict) and usage:
@@ -182,9 +182,9 @@ def call_llm(
     action: str = "",
 ) -> LLMResponse:
     """
-    调用 LLM 并返回结构化结果。
+    调用LLM并返回结构化结果。
 
-    如果服务端不支持 response_format=json_object，会自动降级重试一次。
+    如果服务端不支持response_format=json_object，会自动降级重试一次。
     """
 
     messages: list[tuple[str, str]] = []
@@ -250,7 +250,7 @@ def _log_call(
     """
     把每次模型调用完整落盘：data/runs/<run_id>/llm_calls.jsonl。
 
-    用途：回查“这个 Agent 到底看到了什么、模型回了什么”，
+    用途：回查“这个Agent到底看到了什么、模型回了什么”，
     排查定位失败、理由不合理之类的问题时特别有用。
     """
 
@@ -285,11 +285,11 @@ def _log_call(
 
 def ping(timeout: float | None = None) -> LLMResponse:
     """
-    连通性自检：发一个极小的请求，验证 API Key / 网络 / 模型名是否正确。
+    连通性自检：发一个极小的请求，验证API Key / 网络 / 模型名是否正确。
     """
 
     return call_llm(
-        '请只输出 JSON：{"ok": true}',
+        '请只输出JSON：{"ok": true}',
         agent="review",
         json_mode=True,
         max_tokens=32,
@@ -298,7 +298,7 @@ def ping(timeout: float | None = None) -> LLMResponse:
 
 
 def describe_configuration() -> dict[str, Any]:
-    """返回当前 LLM 配置摘要（不包含密钥本身）。"""
+    """返回当前LLM配置摘要（不包含密钥本身）。"""
 
     settings = get_settings()
     api_key = settings.llm.api_key or ""
@@ -319,6 +319,6 @@ def describe_configuration() -> dict[str, Any]:
 
 
 def dumps(value: Any) -> str:
-    """调试用：紧凑 JSON。"""
+    """调试用：紧凑JSON。"""
 
     return json.dumps(value, ensure_ascii=False, default=str)

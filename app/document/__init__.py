@@ -1,4 +1,4 @@
-"""文档模型层：可寻址的段落切分（span）、补丁（patch）与 Word 回写。"""
+"""文档模型层：可寻址的段落切分（span）、补丁（patch）与Word回写。"""
 
 from app.document.docx_model import DocxBlock, DocxSource, Piece
 from app.document.docx_redline import (

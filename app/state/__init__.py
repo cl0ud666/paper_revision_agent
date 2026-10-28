@@ -1,4 +1,4 @@
-"""Workflow State 定义。"""
+"""Workflow State定义。"""
 
 from app.state.schema import (
     ISSUE_CATEGORIES,

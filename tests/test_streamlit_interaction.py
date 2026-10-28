@@ -1,4 +1,4 @@
-"""通过 Streamlit AppTest 验证实际组件和 Workflow 闸门闭环。"""
+"""通过Streamlit AppTest验证实际组件和Workflow闸门闭环。"""
 
 from __future__ import annotations
 

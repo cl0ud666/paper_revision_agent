@@ -1,8 +1,8 @@
 """
-测试用的假 LLM。
+测试用的假LLM。
 
-不联网也能把整条 Workflow 跑通：
-根据 Prompt 里的【任务】标记，返回预置的 JSON。
+不联网也能把整条Workflow跑通：
+根据Prompt里的【任务】标记，返回预置的JSON。
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ HEADERS = (
 
 
 class FakeMessage:
-    """模拟 LangChain 的 AIMessage。"""
+    """模拟LangChain的AIMessage。"""
 
     def __init__(self, content: str, prompt_tokens: int = 100, completion_tokens: int = 50):
         self.content = content
@@ -49,7 +49,7 @@ class FakeMessage:
 
 
 def flatten_messages(messages: Any) -> str:
-    """把 invoke 的 messages 参数拍平成文本。"""
+    """把invoke的messages参数拍平成文本。"""
 
     parts: list[str] = []
     for message in messages:
@@ -71,7 +71,7 @@ class FakeChatModel:
     """
     按【任务】标记返回预置内容的假模型。
 
-    responses: {header: 内容 或 callable(prompt) -> 内容}
+    responses: {header: 内容 或callable(prompt) -> 内容}
     """
 
     def __init__(
@@ -104,7 +104,7 @@ def fake_factory(
     *,
     calls: list[dict[str, Any]] | None = None,
 ) -> Callable[[str, dict[str, Any]], FakeChatModel]:
-    """构造一个可以塞进 set_llm_factory 的工厂函数。"""
+    """构造一个可以塞进set_llm_factory的工厂函数。"""
 
     def factory(agent: str, overrides: dict[str, Any]) -> FakeChatModel:
         return FakeChatModel(responses, calls=calls)
@@ -161,13 +161,13 @@ def targeted_response(issues: list[dict[str, Any]]) -> str:
 
 
 def patch_response(patches: list[dict[str, Any]], notes: str = "") -> str:
-    """Revision Agent 的输出：一次给出本轮全部补丁。"""
+    """Revision Agent的输出：一次给出本轮全部补丁。"""
 
     return json.dumps({"patches": patches, "notes": notes}, ensure_ascii=False)
 
 
 def revision_response(patches: list[dict[str, Any]], notes: str = "") -> str:
-    """兼容旧写法（现在 Revision 输出的是补丁）。"""
+    """兼容旧写法（现在Revision输出的是补丁）。"""
 
     return patch_response(patches, notes)
 

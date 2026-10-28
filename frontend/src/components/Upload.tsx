@@ -57,7 +57,7 @@ export function Upload({ onClose }: { onClose: () => void }) {
         >
           <label className="upload-zone">
             <UploadCloud size={34} />
-            <strong>{file ? file.name : '点击选择 Word 论文'}</strong>
+            <strong>{file ? file.name : '点击选择Word论文'}</strong>
             <span>DOCX / DOC / WPS / RTF / ODT · 最大 20 MB</span>
             <input
               type="file"
@@ -68,8 +68,9 @@ export function Upload({ onClose }: { onClose: () => void }) {
             />
           </label>
           <p className="muted small">
-            非 DOCX 文件会在后台转换，原稿保留，输出统一为 DOCX。仅支持 Word 兼容的 WPS
-            文件；复杂排版可能变化，建议优先上传 DOCX。
+            {
+              '非DOCX文件会在后台转换，原稿保留，输出统一为DOCX。仅支持Word兼容的WPS文件；复杂排版可能变化，建议优先上传DOCX。'
+            }
           </p>
           <label>
             修改目标

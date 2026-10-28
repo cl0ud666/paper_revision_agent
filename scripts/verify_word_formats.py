@@ -31,7 +31,7 @@ def main():
         root = Path(directory)
         document = Document()
         document.add_heading("Word format verification", 0)
-        document.add_paragraph("本文采用 MoCo 方法进行实验。")
+        document.add_paragraph("本文采用MoCo方法进行实验。")
         table = document.add_table(rows=2, cols=2)
         table.cell(0, 0).text = "Method"
         table.cell(0, 1).text = "Score"
@@ -67,7 +67,7 @@ def main():
             normalized, warnings = normalize_word(legacy, f"fixture.{suffix}")
             assert warnings
             model = DocxSource(normalized)
-            assert "本文采用 MoCo 方法进行实验。" in model.text
+            assert "本文采用MoCo方法进行实验。" in model.text
             assert "85.2" in model.text
             span = next(s for s in build_spans(model.text) if "MoCo" in s.text)
             start = span.text.index("MoCo")

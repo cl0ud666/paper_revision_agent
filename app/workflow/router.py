@@ -1,14 +1,14 @@
 """
 Workflow Router（条件边）。
 
-Router 不执行任务，只根据 State 判断“下一步去哪个 Node”。
+Router不执行任务，只根据State判断“下一步去哪个Node”。
 
 关键规则：
 
-1. Orchestrator 决定首次进入哪个 Node；
-2. Audit 失败或没有发现问题 → 直接出报告；
+1. Orchestrator决定首次进入哪个Node；
+2. Audit失败或没有发现问题 → 直接出报告；
 3. 用户没有批准任何问题 → 直接出报告；
-4. Review PASS → 报告；FAIL → 回到 Orchestrator 重新规划；
+4. Review PASS → 报告；FAIL → 回到Orchestrator重新规划；
 5. 达到迭代上限后强制出报告（熔断，避免无限循环）。
 """
 
@@ -31,7 +31,7 @@ def _explicit_work(state):
 
 
 def route_from_orchestrator(state: Any) -> str:
-    """根据 Orchestrator 的规划决定下一个 Node。"""
+    """根据Orchestrator的规划决定下一个Node。"""
 
     from app.agents.orchestrator import requires_initial_audit
 
@@ -42,8 +42,8 @@ def route_from_orchestrator(state: Any) -> str:
         # 状态异常时回到最安全的路径：先审查
         return "audit"
     # 已经问过用户一轮"前后矛盾"了，就不再开第二次闸门——
-    # 同一批矛盾反复问只会让人烦；用户的判断已经作为规则存在 State 里，
-    # Revision 会照它执行。真要再问，请让用户在多轮追问里自己提。
+    # 同一批矛盾反复问只会让人烦；用户的判断已经作为规则存在State里，
+    # Revision会照它执行。真要再问，请让用户在多轮追问里自己提。
     if action == "human_approval" and state.get("decisions"):
         return "revision"
     return "revision" if action == "report" and _explicit_work(state) else action
@@ -103,9 +103,9 @@ def route_after_human(state: Any) -> str:
 
 def route_after_review(state: Any) -> str:
     """
-    Review 之后：PASS 出报告；FAIL 回 Orchestrator 重新规划。
+    Review之后：PASS出报告；FAIL回Orchestrator重新规划。
 
-    注意：是否达标由 Review 决定，Orchestrator 只负责“接下来怎么办”。
+    注意：是否达标由Review决定，Orchestrator只负责“接下来怎么办”。
     """
 
     result = state.get("review_result") or {}

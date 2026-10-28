@@ -1,18 +1,18 @@
 """
-服务层：把 LangGraph Workflow 包装成“可被 Web 服务管理的任务”。
+服务层：把LangGraph Workflow包装成“可被Web服务管理的任务”。
 
-这一层刻意不依赖任何 Web 框架（FastAPI / Flask 都只是它的薄适配层），
-因此换框架、加 CLI、做定时任务，业务逻辑都不用改。
+这一层刻意不依赖任何Web框架（FastAPI / Flask都只是它的薄适配层），
+因此换框架、加CLI、做定时任务，业务逻辑都不用改。
 
 关键设计：
 
 1. **任务是后台线程跑的**：一次论文修改要调用模型几十秒到几分钟，
-   HTTP 请求不能阻塞；提交后立刻返回 run_id，前端轮询或订阅 SSE 看进度。
-2. **进度来自 trace.jsonl 增量读取**：不用改 Workflow，
-   任何进程都能看到每个 Agent 的实时进展（耗时 / 重试 / Token）。
-3. **人工确认是一个可恢复的资源**：状态停在 awaiting_human，
-   前端刷新、换浏览器、甚至服务重启（配了 SQLite Checkpoint）都能接着确认。
-4. **状态落盘**：每次状态变化写 data/runs/<run_id>/session.json，
+   HTTP请求不能阻塞；提交后立刻返回run_id，前端轮询或订阅SSE看进度。
+2. **进度来自trace.jsonl增量读取**：不用改Workflow，
+   任何进程都能看到每个Agent的实时进展（耗时 / 重试 / Token）。
+3. **人工确认是一个可恢复的资源**：状态停在awaiting_human，
+   前端刷新、换浏览器、甚至服务重启（配了SQLite Checkpoint）都能接着确认。
+4. **状态落盘**：每次状态变化写data/runs/<run_id>/session.json，
    重启后能恢复出任务列表与等待确认的问题清单。
 """
 
@@ -47,11 +47,11 @@ MAX_LOGS = 500
 
 # 事件标签（前端时间线用中文展示）
 AGENT_LABELS = {
-    "orchestrator": "Orchestrator 规划",
-    "audit": "Audit 审查",
-    "revision": "Revision 修改",
-    "review": "Review 复核",
-    "judge": "Judge 评分",
+    "orchestrator": "Orchestrator规划",
+    "audit": "Audit审查",
+    "revision": "Revision修改",
+    "review": "Review复核",
+    "judge": "Judge评分",
     "workflow": "流程",
     "system": "系统",
 }
@@ -271,7 +271,7 @@ class RunSession:
                 auto_approve_constraints=list(self.options.constraints),
                 logger=self._log,
             )
-            # 重启后继续：run_id / thread_id 都是确定的，可以直接恢复
+            # 重启后继续：run_id / thread_id都是确定的，可以直接恢复
             self._harness.run_id = self.run_id
         return self._harness
 
@@ -345,7 +345,7 @@ class RunSession:
             # 落一份状态快照：服务重启后还能重建“等待确认”的问题清单
             self._write_state_snapshot(state)
             # 先落盘再更新内存：这样任何读到新状态的读者，
-            # 都能保证磁盘上的 session.json 已经同步（避免读到旧状态）
+            # 都能保证磁盘上的session.json已经同步（避免读到旧状态）
             self._write_session(new_status, new_stage, self.error, pending=pending)
             self._release_slot()
             self.status = new_status
@@ -467,7 +467,7 @@ class RunSession:
             return state.get("budget") or {}
 
     def events(self, cursor: int = 0) -> dict[str, Any]:
-        """增量事件（轮询与 SSE 共用）。"""
+        """增量事件（轮询与SSE共用）。"""
 
         self._ingest_events()
         with self._lock:
@@ -482,7 +482,7 @@ class RunSession:
             }
 
     def trace_summary(self) -> dict[str, Any]:
-        """从 trace 文件实时汇总（不依赖进程内状态，重启后依然可用）。"""
+        """从trace文件实时汇总（不依赖进程内状态，重启后依然可用）。"""
 
         summary = _summarize_trace_file(self.trace_path)
         if summary["totals"]["calls"]:
@@ -533,7 +533,7 @@ class RunSession:
     def _effective_stage(self) -> str:
         if self.status in {STATUS_COMPLETED, STATUS_FAILED, STATUS_AWAITING}:
             return self.stage
-        for event in reversed(self._events):  # 运行中：用最后一个 Agent 事件推断阶段
+        for event in reversed(self._events):  # 运行中：用最后一个Agent事件推断阶段
             if event.get("type") == "agent":
                 return str(event.get("agent") or "running")
         return self.stage
@@ -542,7 +542,7 @@ class RunSession:
         return self.run_dir / "report.md"
 
     def _log(self, message: str) -> None:
-        """Harness 的日志回调（只留尾部，出错时用来排查）。"""
+        """Harness的日志回调（只留尾部，出错时用来排查）。"""
 
         try:
             with self._lock:
@@ -561,7 +561,7 @@ class RunSession:
                 del self._events[: len(self._events) - MAX_EVENTS]
 
     def _ingest_events(self) -> None:
-        """把 trace.jsonl 里新增的行转成前端事件。"""
+        """把trace.jsonl里新增的行转成前端事件。"""
 
         try:
             if not self.trace_path.exists():
@@ -622,7 +622,7 @@ class RunSession:
             raise RunStateError("任务状态持久化失败") from exc
 
     def _write_state_snapshot(self, state: dict[str, Any]) -> None:
-        """把当前 State 存盘（剔除体积较大的 trace 字段）。"""
+        """把当前State存盘（剔除体积较大的trace字段）。"""
 
         if not self.persistent or not state:
             return
@@ -631,7 +631,7 @@ class RunSession:
             payload = {key: value for key, value in state.items() if key != "trace"}
             _atomic_json(self.state_path, payload)
         except OSError as exc:
-            raise RunStateError("Workflow 状态快照持久化失败") from exc
+            raise RunStateError("Workflow状态快照持久化失败") from exc
 
 
 class RunManager:
@@ -645,7 +645,7 @@ class RunManager:
             else self.settings.server.max_concurrent_runs
         )
         if self.max_concurrent < 1:
-            raise ValueError("max_concurrent 必须大于 0")
+            raise ValueError("max_concurrent必须大于0")
         self._limiter = threading.BoundedSemaphore(self.max_concurrent)
         self._sessions: dict[str, RunSession] = {}
         self._lock = threading.RLock()
@@ -657,7 +657,7 @@ class RunManager:
             return sum(1 for session in self._sessions.values() if session.is_active)
 
     def get(self, run_id: str) -> RunSession:
-        """取任务：内存里没有就从 data/runs/<run_id>/session.json 恢复。"""
+        """取任务：内存里没有就从data/runs/<run_id>/session.json恢复。"""
 
         with self._lock:
             session = self._sessions.get(run_id)
@@ -677,13 +677,13 @@ class RunManager:
         session.finished_at = payload.get("finished_at", "")
 
         if session.status == STATUS_AWAITING:
-            # 原样恢复实际请求，包括 defaults、选项和分组补丁 ID。
+            # 原样恢复实际请求，包括defaults、选项和分组补丁ID。
             session.pending = deepcopy(payload.get("pending_request") or {})
             if not session.pending:
-                # 兼容旧 session：读取真正的 Checkpoint interrupt，禁止猜闸门。
+                # 兼容旧session：读取真正的Checkpoint interrupt，禁止猜闸门。
                 session.pending = session._harness_for_run().current_pending_request()
                 if not session.pending:
-                    raise RunStateError("暂停任务缺少持久化请求和 Checkpoint，无法安全恢复")
+                    raise RunStateError("暂停任务缺少持久化请求和Checkpoint，无法安全恢复")
                 session._save()
 
         with self._lock:
@@ -734,7 +734,7 @@ class RunManager:
                 )
                 continue
 
-            # CLI 直接跑的 run（没有 session.json）
+            # CLI直接跑的run（没有session.json）
             state = _read_json(path / "state.json") or {}
             items.append(
                 {
@@ -764,8 +764,8 @@ class RunManager:
             if self.active_count() >= self.max_concurrent:
                 raise RunStateError(f"并发任务已达上限（{self.max_concurrent}），请稍后提交")
             if session.run_id in self._sessions or session.run_dir.exists():
-                raise RunStateError("run_id 已存在，请使用新 ID 或恢复原任务")
-            # mkdir 是跨线程/进程的原子目录预留，避免同名任务覆盖。
+                raise RunStateError("run_id已存在，请使用新ID或恢复原任务")
+            # mkdir是跨线程/进程的原子目录预留，避免同名任务覆盖。
             session.run_dir.mkdir(parents=True, exist_ok=False)
             session._limiter = self._limiter
             session._save()
@@ -777,7 +777,7 @@ class RunManager:
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
-    """同目录临时文件 + 原子替换，读者不会看到半个 JSON。"""
+    """同目录临时文件 + 原子替换，读者不会看到半个JSON。"""
     temp_path = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -803,7 +803,7 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 
 
 def _to_event(record: dict[str, Any]) -> dict[str, Any]:
-    """trace.jsonl 的一行 -> 前端事件。"""
+    """trace.jsonl的一行 -> 前端事件。"""
 
     agent = str(record.get("agent") or "")
     action = str(record.get("action") or "")
@@ -885,7 +885,7 @@ def _clip(value: Any, limit: int = 600) -> str:
 
 
 def _summarize_trace_file(path: Path) -> dict[str, Any]:
-    """从 trace.jsonl 实时汇总（进程重启后也能给出完整统计）。"""
+    """从trace.jsonl实时汇总（进程重启后也能给出完整统计）。"""
 
     per_agent: dict[str, dict[str, Any]] = {}
     empty = {

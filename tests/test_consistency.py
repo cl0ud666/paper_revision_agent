@@ -124,7 +124,7 @@ class TestReviewConsistencyCheck(unittest.TestCase):
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
     def test_review_flags_remaining_old_term(self) -> None:
-        """批 2 已改成"马铃薯"，但别处还写着"土豆" → Review 必须指出来。"""
+        """批2已改成"马铃薯"，但别处还写着"土豆" → Review必须指出来。"""
 
         set_llm_factory(fake_factory({REVIEW_HEADER: review_response("pass")}))
         state = {
@@ -338,7 +338,7 @@ class TestProperNounVariants(unittest.TestCase):
 
 
 class TestCrossSectionChecks(unittest.TestCase):
-    """跨章节一致性：只在摘要/结论出现、正文没有的专有名词（BERT 那一类）。"""
+    """跨章节一致性：只在摘要/结论出现、正文没有的专有名词（BERT那一类）。"""
 
     def test_summary_only_name_is_reported(self):
         document = (
@@ -368,7 +368,7 @@ class TestCrossSectionChecks(unittest.TestCase):
         self.assertEqual(find_cross_section_gaps(build_spans(document)), [])
 
     def test_near_miss_acronym_is_reported(self):
-        """阿里云 ESC / ECS 这类只差一个字符的写法。"""
+        """阿里云ESC / ECS这类只差一个字符的写法。"""
 
         document = (
             "## 3 实验\n\n"
@@ -386,13 +386,13 @@ class TestCrossSectionChecks(unittest.TestCase):
         self.assertTrue(items[0]["suspected_labels"])
 
     def test_different_but_valid_acronyms_are_not_flagged(self):
-        """GAT 与 GCN 都是真实存在的模型名，不能当成拼写错误。"""
+        """GAT与GCN都是真实存在的模型名，不能当成拼写错误。"""
 
         document = "## 2 相关工作\n\nGAT 引入了注意力，GCN 聚合邻居信息，两者都被广泛使用。\n"
         self.assertEqual(find_near_miss_names(build_spans(document)), [])
 
     def test_numbered_codes_are_not_spelling_errors(self):
-        """H01/P01、V100/V200 这类编号与型号，差一个字符也不算拼错。"""
+        """H01/P01、V100/V200这类编号与型号，差一个字符也不算拼错。"""
 
         document = "## 3 方法\n\n见 H01 与 H02 两处说明。\n\n对比 P01、T01 三个段落。\n"
         self.assertEqual(find_near_miss_names(build_spans(document)), [])

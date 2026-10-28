@@ -3,10 +3,10 @@
 
 常用命令：
 
-    # 1) 检查 DeepSeek API 是否连通
+    # 1) 检查DeepSeek API是否连通
     python main.py --ping
 
-    # 2) 查看 Workflow 结构（Mermaid）
+    # 2) 查看Workflow结构（Mermaid）
     python main.py --show-graph
 
     # 3) 全面检查并修改一篇论文（中途会停下来让你确认修改范围）
@@ -39,7 +39,7 @@ SEVERITY_LABEL = {"high": "高", "medium": "中", "low": "低"}
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="学术论文智能修改 Multi-Agent 系统（LangGraph + DeepSeek）",
+        description="学术论文智能修改Multi-Agent系统（LangGraph + DeepSeek）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -78,20 +78,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--max-iterations", type=int, default=None, help="最大修改轮次（默认取配置）"
     )
-    parser.add_argument("--run-id", type=str, default="", help="自定义 run_id")
-    parser.add_argument("--show-graph", action="store_true", help="打印并导出 Workflow 结构")
+    parser.add_argument("--run-id", type=str, default="", help="自定义run_id")
+    parser.add_argument("--show-graph", action="store_true", help="打印并导出Workflow结构")
     parser.add_argument(
         "--setup-checkpoint",
         action="store_true",
-        help="初始化持久化 Checkpoint 数据库（部署时执行一次）",
+        help="初始化持久化Checkpoint数据库（部署时执行一次）",
     )
     """
     show_graph() 什么时候被调用？
-靠 main() 里手写的一段判断：
+靠main() 里手写的一段判断：
 
 python
 def main():
-    args = parse_args()          # 解析出 args.show_graph = True/False
+    args = parse_args()          # 解析出args.show_graph = True/False
 
     if args.show_graph:          # ← 只有这里才会触发
         show_graph()             # ← 真正调用
@@ -102,7 +102,7 @@ def main():
         action="store_true",
         help="只解析文件并显示结构（分区/块/噪声），不调用模型、不花钱",
     )
-    parser.add_argument("--ping", action="store_true", help="检查 LLM 配置与连通性")
+    parser.add_argument("--ping", action="store_true", help="检查LLM配置与连通性")
     parser.add_argument("--quiet", "-q", action="store_true", help="减少过程日志")
     return parser.parse_args(argv)
 
@@ -111,7 +111,7 @@ def main():
 
 
 def read_input(args: argparse.Namespace) -> tuple[str, Any]:
-    """读取论文内容，并尽量带上"文件加载结果"（含能否写回 Word）。"""
+    """读取论文内容，并尽量带上"文件加载结果"（含能否写回Word）。"""
 
     if args.text:
         return args.text, None
@@ -132,7 +132,7 @@ def read_input(args: argparse.Namespace) -> tuple[str, Any]:
         print(f"[CLI] 未指定论文，使用示例文件：{default_sample}")
         return default_sample.read_text(encoding="utf-8"), None
 
-    raise SystemExit("请通过 --file 或 --text 提供论文内容。")
+    raise SystemExit("请通过 --file或 --text提供论文内容。")
 
 
 def read_document(args: argparse.Namespace) -> str:
@@ -143,10 +143,10 @@ def read_document(args: argparse.Namespace) -> str:
 
 def source_docx_path(args: argparse.Namespace) -> str:
     """
-    原始 .docx 的路径（用于把改动写回 Word）。
+    原始 .docx的路径（用于把改动写回Word）。
 
-    只有"从文件读的 Word"才有这条路径：改完会在 data/runs/<run_id>/
-    另存一份带修订痕迹的 revised_document.docx，原文件不动。
+    只有"从文件读的Word"才有这条路径：改完会在data/runs/<run_id>/
+    另存一份带修订痕迹的revised_document.docx，原文件不动。
     """
 
     if not args.file or args.text:
@@ -160,7 +160,7 @@ def source_docx_path(args: argparse.Namespace) -> str:
 
 
 def show_graph() -> None:
-    """打印 Workflow 结构，并保存到文档目录。"""
+    """打印Workflow结构，并保存到文档目录。"""
 
     graph = build_graph()
     code = mermaid(graph)
@@ -205,22 +205,20 @@ def show_structure(document: str, name: str = "", *, loaded: Any = None) -> None
         f"标题 {report['headings']} 个，表格 {report['tables']} 个，"
         f"按噪声跳过 {report['skipped_noise']} 个"
     )
-    print(
-        f"默认送审（摘要+正文）：{len(auditable)} 块（可用 PRA_AUDIT_SCOPE=body+refs / all 调整）"
-    )
+    print(f"默认送审（摘要+正文）：{len(auditable)} 块（可用PRA_AUDIT_SCOPE=body+refs / all调整）")
 
     stats = getattr(loaded, "docx_stats", None) or {}
     if getattr(loaded, "can_write_back", False):
         print(
-            "写回 Word：可用"
+            "写回Word：可用"
             f"（可编辑块 {stats.get('writable_blocks', '-')}/{stats.get('blocks', '-')}，"
             f"含公式的块 {stats.get('with_formula', 0)}，含图片的块 {stats.get('with_object', 0)}）"
-            "；改动会以 Word 修订痕迹 + 批注写回副本，原文件不动"
+            "；改动会以Word修订痕迹 + 批注写回副本，原文件不动"
         )
     elif loaded is not None and loaded.format == "docx":
-        print("写回 Word：不可用（没装 lxml，只能输出 Markdown）")
+        print("写回Word：不可用（没装lxml，只能输出Markdown）")
 
-    print("\n--- 前 16 个块 ---")
+    print("\n--- 前16个块 ---")
     for span in spans[:16]:
         flag = f"（跳过：{span.no_reason}）" if not span.auditable else ""
         print(
@@ -229,17 +227,17 @@ def show_structure(document: str, name: str = "", *, loaded: Any = None) -> None
 
     warnings: list[str] = []
     if report["headings"] == 0:
-        warnings.append("没有识别到任何标题：结构可能已丢失，建议改用 .docx 上传。")
+        warnings.append("没有识别到任何标题：结构可能已丢失，建议改用 .docx上传。")
     if report["blocks"] and report["skipped_noise"] / report["blocks"] > 0.4:
         warnings.append(
             f"被跳过的噪声块占 {report['skipped_noise'] / report['blocks']:.0%}（目录/页码等）；"
-            "如果这是 PDF，建议改用 .docx 以保留结构。"
+            "如果这是PDF，建议改用 .docx以保留结构。"
         )
     body_spans = [span for span in spans if span.zone in {"abstract", "body"} and span.auditable]
     if body_spans:
         average = sum(len(span.text) for span in body_spans) / len(body_spans)
         if average < 50:
-            warnings.append(f"正文块平均只有 {average:.0f} 字符，可能是被 PDF 拆成了碎片。")
+            warnings.append(f"正文块平均只有 {average:.0f} 字符，可能是被PDF拆成了碎片。")
     for warning in warnings:
         print(f"\n⚠ {warning}")
     if not warnings:
@@ -250,7 +248,7 @@ def ask_human(request: dict) -> dict:
     """
     命令行下的人机协作：展示问题清单，收集用户选择与约束。
 
-    非交互环境（stdin 不可用）时自动批准全部问题。
+    非交互环境（stdin不可用）时自动批准全部问题。
     """
 
     issues = request.get("issues") or []
@@ -301,10 +299,10 @@ def ask_patches(request: dict) -> dict:
     补丁审阅（默认也是唯一的人工环节）：
     一次性列出本轮全部改动，每条形如
 
-        [patch-001] P03（第 2 句）｜语言表达（中）
+        [patch-001] P03（第2句）｜语言表达（中）
           修改前：……
           修改后：……
-          理由：……            <- Agent 写好的，用户不用写
+          理由：……            <- Agent写好的，用户不用写
 
     用户只需要说“要哪些”：回车=全部接受，none=全部拒绝，或输入编号。
     """
@@ -338,7 +336,7 @@ def ask_patches(request: dict) -> dict:
 
     print("\n可接受的编号：" + "、".join(f"{i + 1}" for i in range(len(decidable))))
     try:
-        raw = input("要接受哪些？（回车=全部接受；none=全部拒绝；也可输入 1,3）：").strip()
+        raw = input("要接受哪些？（回车=全部接受；none=全部拒绝；也可输入1,3）：").strip()
     except (EOFError, KeyboardInterrupt):
         print("\n[CLI] 无法读取输入，默认全部接受。")
         return {"accept_all": True}
@@ -356,20 +354,20 @@ def ask_patches(request: dict) -> dict:
             if 0 <= index < len(decidable):
                 wanted.append(str(decidable[index].get("patch_id")))
         elif piece:
-            wanted.append(piece)  # 也允许直接写 patch-003
+            wanted.append(piece)  # 也允许直接写patch-003
     return {"accepted_ids": wanted}
 
 
 def ask_final_confirm(request: dict) -> dict:
     """
-    写入 Word 之前的最后一次确认：把**跨轮次的全部改动**一次性列出来。
+    写入Word之前的最后一次确认：把**跨轮次的全部改动**一次性列出来。
 
-    前面每轮都在内存里改文本（不然下一轮 Audit 看到的还是旧稿），
-    但 Word 只在最后写一次——所以确认也只需要一次。
+    前面每轮都在内存里改文本（不然下一轮Audit看到的还是旧稿），
+    但Word只在最后写一次——所以确认也只需要一次。
     """
 
     patches = request.get("patches") or []
-    print("\n========== 即将写入 Word 的全部改动 ==========")
+    print("\n========== 即将写入Word的全部改动 ==========")
     for position, patch in enumerate(patches, start=1):
         where = patch.get("position") or patch.get("span_label") or ""
         if patch.get("count"):
@@ -386,7 +384,7 @@ def ask_final_confirm(request: dict) -> dict:
             print(f"    原因：{patch['rationale']}")
 
     try:
-        raw = input("\n要剔除哪几条？（例如 2,5；回车 = 全部写入；none = 都不写入）：").strip()
+        raw = input("\n要剔除哪几条？（例如2,5；回车 = 全部写入；none = 都不写入）：").strip()
     except (EOFError, KeyboardInterrupt):
         print("\n[CLI] 无法读取输入，默认全部写入。")
         return {"excluded_ids": []}
@@ -404,13 +402,13 @@ def ask_final_confirm(request: dict) -> dict:
 
 def ask_issues(request: dict) -> dict:
     """
-    Audit 之后的**决策闸门**：只列出"前后矛盾、必须作者拍板"的问题。
+    Audit之后的**决策闸门**：只列出"前后矛盾、必须作者拍板"的问题。
 
-    为什么只问这一类：写错的问题（fix）Revision 直接改，可以更好的（advice）
+    为什么只问这一类：写错的问题（fix）Revision直接改，可以更好的（advice）
     只写批注，两者都不该打扰用户。真正卡住的只有"两处说法打架、以哪一处为准"——
     实验事实在作者手上，模型看不到，只能问人。
 
-    用户的判断会被记成规则，随 Revision 的上下文一起送达。
+    用户的判断会被记成规则，随Revision的上下文一起送达。
     直接回车 = 这些先不改。
     """
 
@@ -437,7 +435,7 @@ def ask_issues(request: dict) -> dict:
 
     try:
         raw = input(
-            "\n以哪一处为准？按「序号+字母」选，例如 1a 3b；"
+            "\n以哪一处为准？按「序号+字母」选，例如1a 3b；"
             "也可以直接写你自己的判断\n"
             "（回车 = 这些先不改）："
         ).strip()
@@ -459,9 +457,9 @@ def ask_issues(request: dict) -> dict:
 
 def _resolve_choices(raw: str, issues: list[dict]) -> list[str]:
     """
-    把「1a 3b」这样的选择翻成给 Revision 看的**结论文本**。
+    把「1a 3b」这样的选择翻成给Revision看的**结论文本**。
 
-    认不出来的部分原样保留——用户直接写判断（"温度系数以 0.07 为准"）也能用。
+    认不出来的部分原样保留——用户直接写判断（"温度系数以0.07为准"）也能用。
     """
 
     import re
@@ -495,7 +493,7 @@ def _resolve_choices(raw: str, issues: list[dict]) -> list[str]:
 
     # 一个选项都没认出来 → 整句当作用户自己写的判断。
     # 认出了一部分 → 只把没认出来的那截原样附上，不要把整串再塞一遍
-    # （否则会多出一条毫无意义的规则，例如"1好 2a 3a"）。
+    # （否则会多出一条毫无意义的规则，例如"1好2a 3a"）。
     if not used_letters:
         return [raw]
     if leftover:
@@ -522,11 +520,11 @@ def main(argv: list[str] | None = None) -> int:
         from app.workflow.graph import setup_checkpointer
 
         setup_checkpointer()
-        print("Checkpoint 数据库初始化完成。")
+        print("Checkpoint数据库初始化完成。")
         return 0
 
     if args.ping:
-        print("当前 LLM 配置：")
+        print("当前LLM配置：")
         for key, value in describe_configuration().items():
             print(f"  {key}: {value}")
         response = ping()
@@ -554,7 +552,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     source_docx = source_docx_path(args)
     if source_docx:
-        print(f"[CLI] 改动会写回 Word 副本（保留原文件）：{Path(source_docx).name}")
+        print(f"[CLI] 改动会写回Word副本（保留原文件）：{Path(source_docx).name}")
 
     if args.auto_approve:
         result = harness.run_to_completion(
@@ -593,7 +591,7 @@ def main(argv: list[str] | None = None) -> int:
             if not follow_up:
                 break
             turns += 1
-            # 支持在追问里改要求：记住：…… / R1 改成 …… / 取消 R1
+            # 支持在追问里改要求：记住：…… / R1改成 …… / 取消R1
             result = harness.follow_up(follow_up)
             while result.is_interrupted:
                 request = result.pending_request
@@ -612,16 +610,16 @@ def main(argv: list[str] | None = None) -> int:
     print(result.final_report)
 
     if result.docx_path:
-        print("\n========== Word 副本（可直接在 Word/WPS 里接受或拒绝）==========")
+        print("\n========== Word副本（可直接在Word/WPS里接受或拒绝）==========")
         print(f"  {result.docx_path}")
 
     trace = harness.trace_summary()
-    print("========== Trace 汇总 ==========")
+    print("========== Trace汇总 ==========")
     print(f"  调用次数：{trace['totals']['calls']}")
     print(f"  失败次数：{trace['totals']['failures']}")
     print(f"  重试次数：{trace['totals']['retries']}")
     print(f"  总耗时：{trace['totals']['total_ms']} ms")
-    print(f"  Token 总量：{trace['totals']['total_tokens']}")
+    print(f"  Token总量：{trace['totals']['total_tokens']}")
     return 0
 
 

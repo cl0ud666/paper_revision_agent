@@ -1,16 +1,16 @@
 """
-补丁（Patch）：Revision 的输出单位，也是用户逐条接受 / 拒绝的对象。
+补丁（Patch）：Revision的输出单位，也是用户逐条接受 / 拒绝的对象。
 
 一条补丁回答四个问题：
 
-1. **改哪里**：``span_id``（段落稳定 ID）+ 可选 ``quote``（段落内要替换的确切文字）
-   + 可选句子序号 -> 落实到句级 ``span_id:S2``；
+1. **改哪里**：``span_id``（段落稳定ID）+ 可选``quote``（段落内要替换的确切文字）
+   + 可选句子序号 -> 落实到句级``span_id:S2``；
 2. **改成什么**：``replace``；
-3. **为什么改**：``rationale``（由 Agent 写，用户不需要写）；
+3. **为什么改**：``rationale``（由Agent写，用户不需要写）；
 4. **这条算不算数**：``status``（proposed / accepted / rejected / applied / conflict）。
 
 校验规则（``validate_patch``）刻意做得严格：先在**目标段落内部**定位，
-所以在全文中重复出现的句子不会造成歧义；找不到或有多义时记为 ``conflict``
+所以在全文中重复出现的句子不会造成歧义；找不到或有多义时记为``conflict``
 并给出原因，而不是硬改原文。
 """
 
@@ -71,7 +71,7 @@ _CODE_IDENTIFIER_RE = re.compile(r"(?<![A-Za-z0-9_])[A-Za-z_]\w*_[A-Za-z_]\w*(?!
 
 
 def changes_code(before: str, after: str, span_text: str) -> bool:
-    """代码段不修改；正文中引用的 snake_case/常量名也必须逐字保留。"""
+    """代码段不修改；正文中引用的snake_case/常量名也必须逐字保留。"""
     return (
         looks_like_code(span_text)
         or Counter(_CODE_IDENTIFIER_RE.findall(before))
@@ -94,14 +94,14 @@ class Patch:
     quote: str = ""
     replace: str = ""
     rationale: str = ""
-    delete: bool = False  # 删除类修改（replace 允许为空）
+    delete: bool = False  # 删除类修改（replace允许为空）
     category: str = ""
     severity: str = ""
     round: int = 1
     status: str = STATUS_PROPOSED
     conflict_reason: str = ""
     # 被拒的**原因代码**（not_found / ambiguous / no_change / overlap …）。
-    # conflict_reason 是给人读的整句话，这个是机器可判的短码，
+    # conflict_reason是给人读的整句话，这个是机器可判的短码，
     # 短标签（"无法定位"/"定位有歧义"/"无效改动"/"改动冲突"）由它决定。
     conflict_code: str = ""
     warnings: list[str] = field(default_factory=list)
@@ -191,7 +191,7 @@ def patch_from_model(
     issue: dict[str, Any] | None = None,
 ) -> Patch:
     """
-    把模型返回的一条修改转成 Patch 对象（字段名容忍多种写法）。
+    把模型返回的一条修改转成Patch对象（字段名容忍多种写法）。
     """
 
     spans = list(spans)
@@ -208,7 +208,7 @@ def patch_from_model(
 
     raw_replace = _pick(item, "replace", "revised", "after", "new_text", default=None)
     if raw_replace is None and quote:
-        # 有的模型会把修改后的文本写在 suggestion / new 字段里
+        # 有的模型会把修改后的文本写在suggestion / new字段里
         raw_replace = item.get("suggestion", item.get("new"))
     replace = str(raw_replace or "")
 
@@ -250,7 +250,7 @@ def validate_patch(patch: Patch, spans: Iterable[Span]) -> Patch:
     """
     在目标段落内部定位待替换文本，并给出可应用的位置。
 
-    失败时把 patch.status 置为 conflict，并写明原因（前端会展示，用户也能看到
+    失败时把patch.status置为conflict，并写明原因（前端会展示，用户也能看到
     “这条改不动”而不是悄悄丢掉）。
     """
 
@@ -319,7 +319,7 @@ def validate_patch(patch: Patch, spans: Iterable[Span]) -> Patch:
             return _conflict(patch, "no_change")
 
     # 注意：这里用“严格唯一”定位——同一段落里出现多次时判定为歧义，
-    # 而不是随便挑第一处（那是 find_span 的行为，不适合落盘修改）。
+    # 而不是随便挑第一处（那是find_span的行为，不适合落盘修改）。
     start, end, strategy = locate_unique(span.text, quote)
     if start < 0 and patch.replace and not patch.delete:
         # A model may drop a letter while copying a case-only correction
@@ -383,7 +383,7 @@ def _conflict(patch: Patch, reason: str) -> Patch:
 
 _SENTENCE_MARKER_RE = re.compile(r"(?:^|(?<=[。！？；.!?;]))\s*\((\d{1,2})\)\s*")
 
-# Markdown 结构标记：标题的 #、列表的 -、表格的 |
+# Markdown结构标记：标题的 #、列表的 -、表格的 |
 # 它们是**排版结构**，由文档结构保留，不属于正文内容。
 _LEADING_MARKER_RE = re.compile(r"^(#{1,6}[ \t]+|[-*+][ \t]+)")
 
@@ -397,15 +397,15 @@ def normalize_structure_markers(patch: Patch, span: Span) -> Patch:
     """
     把"排版标记"从补丁内容里剥掉。
 
-    为什么必须做：送审文本里的 ``### 3.3.5 对比损失函数优化`` ，
-    前面的 ``###`` 是**我们为了保留标题层级加的**，原文件里并不存在这段字符。
-    模型很容易把它当成正文的一部分抄进 quote / replace，结果就是：
+    为什么必须做：送审文本里的``### 3.3.5对比损失函数优化`` ，
+    前面的``###``是**我们为了保留标题层级加的**，原文件里并不存在这段字符。
+    模型很容易把它当成正文的一部分抄进quote / replace，结果就是：
 
-    - 标题变成 ``### ### 3.3.5 …``（标记重复）；
-    - 或者补丁清单里显示"把 3.3.5 改成了 ### 3.3.5"，让用户以为正文多出了 ###；
-    - 写回 Word 时，``###`` 会变成标题段落里真实的字符。
+    - 标题变成``### ### 3.3.5 …``（标记重复）；
+    - 或者补丁清单里显示"把3.3.5改成了 ### 3.3.5"，让用户以为正文多出了 ###；
+    - 写回Word时，``###``会变成标题段落里真实的字符。
 
-    处理方式：标记由结构保留，补丁只负责**文字本身**。剥掉之后记一条 warning，
+    处理方式：标记由结构保留，补丁只负责**文字本身**。剥掉之后记一条warning，
     用户能在补丁清单里看到"已去掉模型回抄的排版标记"。
     """
 
@@ -441,7 +441,7 @@ def strip_sentence_markers(text: str) -> str:
     """
     去掉“给模型看的句子编号”。
 
-    只有在编号成体系（至少两处、且从 1 开始连续递增）时才清理，
+    只有在编号成体系（至少两处、且从1开始连续递增）时才清理，
     以免误删作者真的写在正文里的 "（1）" 这类编号。
     """
 
@@ -465,7 +465,7 @@ def decide_patch(
     decided_by: str = "user",
     note: str = "",
 ) -> Patch:
-    """接受或拒绝一条补丁（用户只需点一下，理由由 Agent 提供）。"""
+    """接受或拒绝一条补丁（用户只需点一下，理由由Agent提供）。"""
 
     if patch.status == STATUS_CONFLICT and decision == "accept":
         if not patch.conflict_reason:
@@ -646,8 +646,8 @@ def apply_patches(
 
     1. 每条补丁先在**它自己的段落**里定位，再换算成全文偏移；
     2. 从后往前替换，避免前面的替换打乱后面的偏移；
-    3. 互相重叠的补丁只保留靠前那条，另一条记为 conflict（提示用户）；
-    4. 应用后重新索引文档，并回填 ``span_id_after``，把新旧 ID 连起来。
+    3. 互相重叠的补丁只保留靠前那条，另一条记为conflict（提示用户）；
+    4. 应用后重新索引文档，并回填``span_id_after``，把新旧ID连起来。
     """
 
     spans = list(spans)
@@ -715,7 +715,7 @@ def apply_patches(
     version_after = version_after or (max((s.version for s in spans), default=1) + 1)
     spans_after = build_spans(new_document, version=version_after)
 
-    # 回填新 ID（先归一化再比对，避免空白差异导致匹配失败）
+    # 回填新ID（先归一化再比对，避免空白差异导致匹配失败）
     normalized_spans = [(span, normalize_whitespace(span.text)) for span in spans_after]
     for patch in applied:
         needle = normalize_whitespace(patch.replace)

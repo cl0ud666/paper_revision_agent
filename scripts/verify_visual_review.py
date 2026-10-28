@@ -26,9 +26,9 @@ def prepare(root):
     section.page_width, section.page_height = Inches(8.5), Inches(11)
     section.header.paragraphs[0].text = "离线验证样稿 · 非用户论文"
     doc.add_heading("对比学习方法研究", 0)
-    doc.add_heading("1 引言", 1)
+    doc.add_heading("1引言", 1)
     doc.add_paragraph(
-        "本文采用 MoCo 方法学习图像表示，并与已有方法进行比较。术语写法需要统一，实验数据保持不变。"
+        "本文采用MoCo方法学习图像表示，并与已有方法进行比较。术语写法需要统一，实验数据保持不变。"
     )
     doc.add_paragraph(
         "本研究关注方法在小样本场景中的稳定性。以下段落用于检查预览是否保留中文排版、表格和图片，而不是将正文重新拼成网页。"
@@ -52,13 +52,13 @@ def prepare(root):
     image.save(png, format="PNG")
     png.seek(0)
     doc.add_picture(png, width=Inches(5.5))
-    doc.add_paragraph("图 1 方法流程示意")
+    doc.add_paragraph("图1方法流程示意")
     doc.add_page_break()
-    doc.add_heading("2 方法与讨论", 1)
+    doc.add_heading("2方法与讨论", 1)
     doc.add_paragraph(
         "本方法能够显著提升模型的表现。该表述需要明确提升的比较对象，不能凭空补充实验结论。"
     )
-    doc.add_paragraph("参数 FEWSHOT_QUERY_DIR 是程序变量名，代码及变量名保持原样，仅可提出建议。")
+    doc.add_paragraph("参数FEWSHOT_QUERY_DIR是程序变量名，代码及变量名保持原样，仅可提出建议。")
     doc.add_paragraph("结论：本次样稿验证的是导出与选择一致性，不代表模型能保证学术判断正确。")
     doc.save(root / "source.docx")
 
@@ -114,7 +114,7 @@ def verify(root):
             }
         ],
     )
-    assert "采用 MoCo 方法" in exported.text and "有助于改善" in exported.text
+    assert "采用MoCo方法" in exported.text and "有助于改善" in exported.text
     assert "FEWSHOT_QUERY_DIR" in exported.text and len(exported.applied) == 1
     with zipfile.ZipFile(root / "revised.docx") as archive:
         from lxml import etree

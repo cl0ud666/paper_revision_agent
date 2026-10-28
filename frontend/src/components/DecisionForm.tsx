@@ -188,7 +188,7 @@ export function DecisionForm({ run }: { run: Run }) {
               rows={2}
               value={rules}
               onChange={(e) => setRules(e.target.value)}
-              placeholder="例如：温度系数以 0.07 为准"
+              placeholder="例如：温度系数以0.07为准"
             />
           </label>
         )}

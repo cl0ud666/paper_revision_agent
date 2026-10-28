@@ -1,10 +1,10 @@
 """
-从 LLM 输出中稳健地抽取 JSON。
+从LLM输出中稳健地抽取JSON。
 
 为什么需要这个模块：
-LLM 即使被要求“只输出 JSON”，实际返回里也经常出现 ```json 代码块、
-解释性前后缀、尾随逗号、单引号、Python 的 True/False 等。
-如果直接 json.loads，整条 Workflow 会因为格式问题崩掉。
+LLM即使被要求“只输出JSON”，实际返回里也经常出现```json代码块、
+解释性前后缀、尾随逗号、单引号、Python的True/False等。
+如果直接json.loads，整条Workflow会因为格式问题崩掉。
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ _MISSING = _Missing()
 
 
 def strip_code_fence(text: str) -> str:
-    """去掉 Markdown 代码块围栏，只保留内容。"""
+    """去掉Markdown代码块围栏，只保留内容。"""
 
     if not text:
         return ""
@@ -96,8 +96,8 @@ def repair(raw: str, *, python_literals: bool = False) -> str:
     """
     常见格式修复：BOM、中文引号、尾随逗号。
 
-    python_literals=True 时额外把 True/False/None 转成 JSON 的写法，
-    供 json.loads 使用；转成 Python 风格（literal_eval）时必须保持原样。
+    python_literals=True时额外把True/False/None转成JSON的写法，
+    供json.loads使用；转成Python风格（literal_eval）时必须保持原样。
     """
 
     fixed = raw.strip().lstrip("\ufeff")
@@ -114,7 +114,7 @@ def _try_loads(raw: str) -> Any:
     """
     依次尝试多种解析方式，任一种成功即返回。
 
-    顺序很重要：先用标准 JSON，再用宽松修复，最后退回 Python 字面量。
+    顺序很重要：先用标准JSON，再用宽松修复，最后退回Python字面量。
     """
 
     for candidate in (raw, repair(raw), repair(raw, python_literals=True)):
@@ -134,7 +134,7 @@ def _try_loads(raw: str) -> Any:
 
 def extract_json(text: str) -> Any:
     """
-    从任意文本中抽取第一个可解析的 JSON 值。
+    从任意文本中抽取第一个可解析的JSON值。
 
     Raises:
         ModelOutputError: 完全无法解析
@@ -157,7 +157,7 @@ def extract_json(text: str) -> Any:
             return value
 
     preview = text.strip()[:200]
-    raise ModelOutputError(f"无法从模型输出中解析 JSON：{preview!r}")
+    raise ModelOutputError(f"无法从模型输出中解析JSON：{preview!r}")
 
 
 def parse_json_object(
@@ -166,7 +166,7 @@ def parse_json_object(
     required_keys: tuple[str, ...] = (),
     context: str = "",
 ) -> dict[str, Any]:
-    """解析出一个 JSON 对象（dict）。"""
+    """解析出一个JSON对象（dict）。"""
 
     value = extract_json(text)
     if isinstance(value, dict) and len(value) == 1:
@@ -175,7 +175,7 @@ def parse_json_object(
         if isinstance(inner, dict) and all(key in inner for key in required_keys):
             value = inner
     if not isinstance(value, dict):
-        raise ModelOutputError(f"{context} 期望 JSON 对象，实际得到 {type(value).__name__}")
+        raise ModelOutputError(f"{context} 期望JSON对象，实际得到 {type(value).__name__}")
     missing = [key for key in required_keys if key not in value]
     if missing:
         raise ModelOutputError(f"{context} 缺少字段：{missing}")
@@ -189,9 +189,9 @@ def parse_json_list(
     context: str = "",
 ) -> list[Any]:
     """
-    解析出一个 JSON 数组。
+    解析出一个JSON数组。
 
-    如果模型返回 {"issues": [...]} 这种对象，可以用 key 指定字段名。
+    如果模型返回 {"issues": [...]} 这种对象，可以用key指定字段名。
     """
 
     value = extract_json(text)
@@ -201,14 +201,14 @@ def parse_json_list(
         for item in value.values():
             if isinstance(item, list):
                 return item
-        raise ModelOutputError(f"{context} 期望 JSON 数组，实际得到对象且不含数组字段")
+        raise ModelOutputError(f"{context} 期望JSON数组，实际得到对象且不含数组字段")
     if not isinstance(value, list):
-        raise ModelOutputError(f"{context} 期望 JSON 数组，实际得到 {type(value).__name__}")
+        raise ModelOutputError(f"{context} 期望JSON数组，实际得到 {type(value).__name__}")
     return value
 
 
 def compact_json(value: Any, *, max_chars: int = 2000) -> str:
-    """把对象压成紧凑 JSON，超长时截断（用于 Context 治理）。"""
+    """把对象压成紧凑JSON，超长时截断（用于Context治理）。"""
 
     try:
         text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))

@@ -14,7 +14,7 @@ def validate_word_upload(data: bytes, filename: str) -> str:
 
 
 class LocalStore:
-    """仅用于测试或单机开发，生产 Compose 使用 S3/MinIO。"""
+    """仅用于测试或单机开发，生产Compose使用S3/MinIO。"""
 
     def path(self, key: str):
         root = settings().storage_root.resolve()
@@ -74,5 +74,5 @@ def store():
     if backend == "local":
         return LocalStore()
     if backend != "s3":
-        raise ValueError("PRA_STORAGE_BACKEND 必须为 s3 或 local")
+        raise ValueError("PRA_STORAGE_BACKEND必须为s3或local")
     return S3Store()

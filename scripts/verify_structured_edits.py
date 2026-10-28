@@ -38,8 +38,8 @@ def run(directory):
             border.getparent().remove(border)
     doc.add_heading("论文结构编辑验证", 0)
     doc.add_paragraph("本文件只用于验证修改、取消修改与结构保护，不包含客户论文。")
-    doc.add_heading("1 方法与格式", 1)
-    doc.add_paragraph("目标术语 MoCo 的字体将单独加粗并调整字号。")
+    doc.add_heading("1方法与格式", 1)
+    doc.add_paragraph("目标术语MoCo的字体将单独加粗并调整字号。")
     doc.add_paragraph("新增公式位置：平均值定义为")
     doc.add_paragraph("已有公式保持原样：")._p.append(formula_xml(r"E=mc^2"))
     pic = Image.new("RGB", (180, 40), "#dceadf")
@@ -48,11 +48,11 @@ def run(directory):
     pic.save(image, format="PNG")
     image.seek(0)
     doc.add_picture(image, width=Inches(1.8))
-    doc.add_heading("1.1 方法定义", 2)
+    doc.add_heading("1.1方法定义", 2)
     title = doc.add_paragraph()
     title.add_run("1.2\t")
     title.add_run("国内外研究现状")
-    doc.add_heading("2 表格与引用", 1)
+    doc.add_heading("2表格与引用", 1)
     table = doc.add_table(rows=3, cols=2)
     table.style = "Table Grid"
     for row, values in zip(
@@ -108,7 +108,7 @@ def run(directory):
             {
                 "paragraphs": [
                     {"text": "待开展对比实验：固定数据划分与评价指标。"},
-                    {"text": "实测结果：准确率 XXX，召回率 XXX（待填，不作有效性结论）。"},
+                    {"text": "实测结果：准确率XXX，召回率XXX（待填，不作有效性结论）。"},
                 ]
             },
         ),

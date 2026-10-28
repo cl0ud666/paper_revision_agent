@@ -1,5 +1,5 @@
 """
-构建论文修改 Workflow（LangGraph StateGraph）。
+构建论文修改Workflow（LangGraph StateGraph）。
 
 正常路径（稳定、可预测）：
 
@@ -7,13 +7,13 @@
           → Patch Review（用户逐条接受/拒绝，唯一的人工闸门）
           → Apply（把接受的补丁一次性应用） → Review → Report → END
 
-异常路径（只有出现问题时才重新唤起 Planner）：
+异常路径（只有出现问题时才重新唤起Planner）：
 
     Review FAIL → Orchestrator（Adaptive Re-planning）→ Audit / Revision / Report
 
-Human Approval 通过 ``interrupt`` 暂停，因此 Graph 必须带 Checkpointer 编译。
-问题闸门只对 Audit 标记为 ``decision`` 的前后矛盾生效；普通 fix/advice 不额外打断用户。
-``PRA_ISSUE_GATE`` 作为兼容配置保留，但不改变这一决策类型边界。
+Human Approval通过``interrupt``暂停，因此Graph必须带Checkpointer编译。
+问题闸门只对Audit标记为``decision``的前后矛盾生效；普通fix/advice不额外打断用户。
+``PRA_ISSUE_GATE``作为兼容配置保留，但不改变这一决策类型边界。
 """
 
 from __future__ import annotations
@@ -46,20 +46,20 @@ from app.workflow.router import (
     route_from_orchestrator,
 )
 
-# 同一个 SQLite 文件只开一条连接、共用一个 Saver。
+# 同一个SQLite文件只开一条连接、共用一个Saver。
 # 为什么必须这样：并发跑多个任务时，若每个任务各自建连接，
-# 建表 / 写入会互相抢锁（database is locked），Checkpoint 会失效。
+# 建表 / 写入会互相抢锁（database is locked），Checkpoint会失效。
 _CHECKPOINTERS: dict[str, Any] = {}
 _CHECKPOINTERS_LOCK = threading.Lock()
 
 
 def build_checkpointer(settings: Settings | None = None) -> Any:
     """
-    创建 Checkpointer。
+    创建Checkpointer。
 
-    auto 模式配置 PRA_CHECKPOINT_URL 后使用 PostgreSQL，否则本地使用 SQLite。
-    PostgreSQL 不可用时明确失败，避免生产任务静默退回内存而无法恢复。
-    显式 memory 仅用于开发和测试。
+    auto模式配置PRA_CHECKPOINT_URL后使用PostgreSQL，否则本地使用SQLite。
+    PostgreSQL不可用时明确失败，避免生产任务静默退回内存而无法恢复。
+    显式memory仅用于开发和测试。
     """
 
     settings = settings or get_settings()
@@ -68,13 +68,13 @@ def build_checkpointer(settings: Settings | None = None) -> Any:
     if backend == "auto":
         backend = "postgres" if url else "sqlite"
     if backend not in {"postgres", "sqlite", "memory"}:
-        raise ValueError("PRA_CHECKPOINT_BACKEND 必须为 auto/postgres/sqlite/memory")
+        raise ValueError("PRA_CHECKPOINT_BACKEND必须为auto/postgres/sqlite/memory")
     if backend == "memory":
         return InMemorySaver()
     if backend == "postgres":
         if not url:
-            raise ValueError("PostgreSQL Checkpointer 需要配置 PRA_CHECKPOINT_URL")
-        # 连接池按进程创建；Celery prefork 不能复用父进程的数据库连接。
+            raise ValueError("PostgreSQL Checkpointer需要配置PRA_CHECKPOINT_URL")
+        # 连接池按进程创建；Celery prefork不能复用父进程的数据库连接。
         key = f"postgres:{os.getpid()}:{url}"
         with _CHECKPOINTERS_LOCK:
             cached = _CHECKPOINTERS.get(key)
@@ -87,7 +87,7 @@ def build_checkpointer(settings: Settings | None = None) -> Any:
                 from psycopg_pool import ConnectionPool
             except ImportError as exc:
                 raise RuntimeError(
-                    "请安装 requirements-web.txt 中的 PostgreSQL Checkpoint 依赖"
+                    "请安装requirements-web.txt中的PostgreSQL Checkpoint依赖"
                 ) from exc
             pool = None
             try:
@@ -103,9 +103,9 @@ def build_checkpointer(settings: Settings | None = None) -> Any:
             except Exception:
                 if pool is not None:
                     pool.close()
-                # 不在错误中泄露包含密码的数据库 URL。
+                # 不在错误中泄露包含密码的数据库URL。
                 raise RuntimeError(
-                    "PostgreSQL Checkpointer 连接失败；请检查数据库配置和可用性"
+                    "PostgreSQL Checkpointer连接失败；请检查数据库配置和可用性"
                 ) from None
             _CHECKPOINTERS[key] = saver
             return saver
@@ -128,7 +128,7 @@ def build_checkpointer(settings: Settings | None = None) -> Any:
                     return cached
 
                 path.parent.mkdir(parents=True, exist_ok=True)
-                # check_same_thread=False：Web 服务里同一个 Graph 会被不同线程调用
+                # check_same_thread=False：Web服务里同一个Graph会被不同线程调用
                 conn = sqlite3.connect(str(path), check_same_thread=False, timeout=30.0)
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("PRAGMA busy_timeout=10000")
@@ -137,11 +137,11 @@ def build_checkpointer(settings: Settings | None = None) -> Any:
                 saver.setup()
                 _CHECKPOINTERS[key] = saver
                 return saver
-        except Exception as exc:  # noqa: BLE001 - 未安装时退回内存 Checkpointer
+        except Exception as exc:  # noqa: BLE001 - 未安装时退回内存Checkpointer
             import warnings
 
             warnings.warn(
-                f"SQLite Checkpoint 不可用（{exc}），退回内存 Checkpointer："
+                f"SQLite Checkpoint不可用（{exc}），退回内存Checkpointer："
                 "服务重启后无法恢复暂停中的任务。",
                 RuntimeWarning,
             )
@@ -149,7 +149,7 @@ def build_checkpointer(settings: Settings | None = None) -> Any:
 
 
 def reset_checkpointers() -> None:
-    """关闭并清空 Checkpointer 缓存（测试用）。"""
+    """关闭并清空Checkpointer缓存（测试用）。"""
 
     with _CHECKPOINTERS_LOCK:
         for key, saver in list(_CHECKPOINTERS.items()):
@@ -161,10 +161,10 @@ def reset_checkpointers() -> None:
 
 
 def setup_checkpointer() -> None:
-    """部署时执行一次；PostgresSaver 的建表迁移不放在每次任务里。"""
+    """部署时执行一次；PostgresSaver的建表迁移不放在每次任务里。"""
     saver = build_checkpointer()
     if isinstance(saver, InMemorySaver):
-        raise RuntimeError("内存 Checkpointer 无需初始化，请配置持久化后端")
+        raise RuntimeError("内存Checkpointer无需初始化，请配置持久化后端")
     saver.setup()
 
 
@@ -173,12 +173,12 @@ def build_graph(
     checkpointer: Any | None = None,
     settings: Settings | None = None,
 ) -> Any:
-    """创建并编译 Workflow。"""
+    """创建并编译Workflow。"""
 
     settings = settings or get_settings()
     builder = StateGraph(PaperState)
 
-    # ---------------- 1. 注册 Nodes ----------------
+    # ---------------- 1. 注册Nodes ----------------
     builder.add_node("orchestrator", orchestrator_node)
     builder.add_node("audit", audit_node)
     builder.add_node("issue_review", issue_review_node)
@@ -193,20 +193,20 @@ def build_graph(
     # ---------------- 2. 入口 ----------------
     builder.add_edge(START, "orchestrator")
 
-    # ---------------- 3. Orchestrator 的条件路由 ----------------
+    # ---------------- 3. Orchestrator的条件路由 ----------------
     builder.add_conditional_edges(
         "orchestrator",
         route_from_orchestrator,
         {
             "audit": "audit",
             "revision": "revision",
-            # Orchestrator 说“需要人拍板”时，统一走问题闸门（列出问题问用户）
+            # Orchestrator说“需要人拍板”时，统一走问题闸门（列出问题问用户）
             "human_approval": "issue_review",
             "report": "prepare_report",
         },
     )
 
-    # ---------------- 4. Audit 之后 ----------------
+    # ---------------- 4. Audit之后 ----------------
     builder.add_conditional_edges(
         "audit",
         route_after_audit,
@@ -258,6 +258,6 @@ def build_graph(
 
 
 def mermaid(graph: Any) -> str:
-    """导出 Graph 的 Mermaid 结构（用于文档与调试）。"""
+    """导出Graph的Mermaid结构（用于文档与调试）。"""
 
     return graph.get_graph().draw_mermaid()

@@ -1,5 +1,5 @@
 """
-Agent 流程测试：补丁闸门、多轮会话、成本预算、逐条决定的规范化。
+Agent流程测试：补丁闸门、多轮会话、成本预算、逐条决定的规范化。
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ class AgentFlowTestCase(unittest.TestCase):
         os.environ["PRA_RETRY_MAX_ATTEMPTS"] = "1"
         os.environ["PRA_RETRY_BASE_DELAY"] = "0"
         # 这个文件验证的是**交互式**流程，所以打开补丁闸门；
-        # decision findings 仍由工作流按问题类型进入人工拍板。
+        # decision findings仍由工作流按问题类型进入人工拍板。
         os.environ["PRA_PATCH_GATE"] = "1"
         os.environ["PRA_FINAL_CONFIRM"] = "0"
         reset_settings()
@@ -176,7 +176,7 @@ class TestMultiTurn(AgentFlowTestCase):
         self.assertEqual(request["patches"][0]["span_label"], "P02")
         self.assertIn("引言", request["patches"][0]["rationale"])
 
-        # 第二轮提补丁时，Prompt 里带着第一轮被拒绝的改动（不会重复打扰）
+        # 第二轮提补丁时，Prompt里带着第一轮被拒绝的改动（不会重复打扰）
         second_prompt = prompts["revision"][-1]
         self.assertIn("已被用户拒绝的改动", second_prompt)
         self.assertIn(ABSTRACT_IMPROVED[:12], second_prompt)
@@ -195,12 +195,12 @@ class TestMultiTurn(AgentFlowTestCase):
 
     def test_user_rules_persist_across_turns_and_can_be_changed(self) -> None:
         """
-        ③ 用户说的“点”存在 user_rules 里：
+        ③ 用户说的“点”存在user_rules里：
 
         - 开局可以带要求（--rule）；
-        - Audit 之后可以忽略某些问题，决定会被记住；
+        - Audit之后可以忽略某些问题，决定会被记住；
         - 下一轮不再重复问同一批问题；
-        - 用户可以用“取消 R1”这类话改掉自己之前的要求。
+        - 用户可以用“取消R1”这类话改掉自己之前的要求。
         """
 
         prompts: dict[str, list[str]] = {"audit": [], "revision": []}
@@ -252,7 +252,7 @@ class TestMultiTurn(AgentFlowTestCase):
             rules=["全文统一把「土豆」写成「马铃薯」"],
         )
 
-        # 开局的要求立刻可见，并且 Audit 也看得到
+        # 开局的要求立刻可见，并且Audit也看得到
         self.assertIn("马铃薯", result.state["user_rules"][0]["text"])
         self.assertIn("马铃薯", prompts["audit"][0])
 
@@ -352,7 +352,7 @@ class TestPatchGate(AgentFlowTestCase):
         self.assertEqual(stats["rejected"], 1)
 
     def test_rejected_patch_must_not_leak_into_document(self) -> None:
-        """如果被拒绝的改动仍然出现在文本里，Review 必须判 fail。"""
+        """如果被拒绝的改动仍然出现在文本里，Review必须判fail。"""
 
         from app.agents import review as review_agent
 
@@ -388,7 +388,7 @@ class TestPatchGate(AgentFlowTestCase):
         """
         用户拒绝某条改动 = 主动缩小范围。
 
-        Review 不能因为“这条没改”就判 fail，否则会一轮轮重复打扰用户。
+        Review不能因为“这条没改”就判fail，否则会一轮轮重复打扰用户。
         """
 
         from app.agents import review as review_agent
@@ -466,7 +466,7 @@ class TestPatchGate(AgentFlowTestCase):
         update = review_agent.run(state, logger=lambda message: None)
         result = update["review_result"]
 
-        # P02 那条属于用户已拒绝的范围，被排除；只剩真正未解决的一条
+        # P02那条属于用户已拒绝的范围，被排除；只剩真正未解决的一条
         self.assertEqual(len(result["remaining_issues"]), 1)
         self.assertEqual(result["remaining_issues"][0]["span_label"], "P09")
 

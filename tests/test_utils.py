@@ -1,5 +1,5 @@
 """
-工具层单元测试：JSON 解析、编辑落地、文本处理、Context 治理、重试熔断。
+工具层单元测试：JSON解析、编辑落地、文本处理、Context治理、重试熔断。
 """
 
 from __future__ import annotations
@@ -253,7 +253,7 @@ class TestContext(unittest.TestCase):
         self.assertIn("问题一", fields["approved_issues"])
 
     def test_user_rules_are_shared_with_all_agents(self) -> None:
-        """用户定的要求，四个 Agent 都要看得到（否则 Audit 会把它当问题报）。"""
+        """用户定的要求，四个Agent都要看得到（否则Audit会把它当问题报）。"""
 
         state = dict(self.state)
         state["user_rules"] = [

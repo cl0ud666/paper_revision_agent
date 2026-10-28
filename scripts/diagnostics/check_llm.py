@@ -1,7 +1,7 @@
 """
-LLM 连通性自检脚本。
+LLM连通性自检脚本。
 
-用途：确认 .env 里的 API Key、网络与模型名都正确。
+用途：确认 .env里的API Key、网络与模型名都正确。
 
 运行：
 
@@ -14,7 +14,7 @@ from app.utils.llm import describe_configuration, ping
 
 
 def main() -> int:
-    print("========== LLM 配置 ==========")
+    print("========== LLM配置 ==========")
     for key, value in describe_configuration().items():
         print(f"{key}: {value}")
 
@@ -28,7 +28,7 @@ def main() -> int:
     print("成功。模型返回：")
     print(response.text.strip())
     print(
-        f"\nToken 用量：prompt={response.usage.prompt_tokens} "
+        f"\nToken用量：prompt={response.usage.prompt_tokens} "
         f"completion={response.usage.completion_tokens} total={response.usage.total_tokens}"
     )
     return 0

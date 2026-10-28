@@ -1,5 +1,5 @@
 """
-只跑一次 Audit（真实模型），用来对比精度改进。
+只跑一次Audit（真实模型），用来对比精度改进。
 
 用法：python -m scripts.diagnostics.run_audit_once <file-or-run-dir>
 """

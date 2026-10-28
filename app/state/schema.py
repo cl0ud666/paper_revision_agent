@@ -1,18 +1,18 @@
 """
-定义整个论文修改 Workflow 使用的 State。
+定义整个论文修改Workflow使用的State。
 
-State 可以理解为：
+State可以理解为：
 **“当前这个论文修改任务，此刻已经知道的所有重要信息”。**
 
 要点：
 
 1. State ≠ Context。
-   State 是任务状态（完整、结构化），Context 是某个 Agent 调用 LLM 时
-   真正需要看到的那一小部分。两者之间的裁剪逻辑在 ``app.utils.context``。
-2. 累积型字段（trace / history）使用 ``Annotated[list, add]``，
-   LangGraph 会做“追加”而不是“覆盖”。
+   State是任务状态（完整、结构化），Context是某个Agent调用LLM时
+   真正需要看到的那一小部分。两者之间的裁剪逻辑在``app.utils.context``。
+2. 累积型字段（trace / history）使用``Annotated[list, add]``，
+   LangGraph会做“追加”而不是“覆盖”。
 3. 所有字段必须可序列化（str / int / float / list / dict / None），
-   因为要经过 Checkpointer 持久化，并支持 Human-in-the-loop 中断后恢复。
+   因为要经过Checkpointer持久化，并支持Human-in-the-loop中断后恢复。
 """
 
 from __future__ import annotations
@@ -20,13 +20,13 @@ from __future__ import annotations
 from operator import add
 from typing import Annotated, Any, TypedDict
 
-# Orchestrator 允许输出的下一步动作（与 Router 的映射保持一致）
+# Orchestrator允许输出的下一步动作（与Router的映射保持一致）
 ROUTE_ACTIONS = ("audit", "revision", "human_approval", "report")
 
 # 问题严重程度（用于排序）
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
-# 问题分类（Audit 只能从这些类别里选）
+# 问题分类（Audit只能从这些类别里选）
 ISSUE_CATEGORIES = (
     "语言表达",
     "术语使用",
@@ -42,13 +42,13 @@ ISSUE_CATEGORIES = (
 
 
 class Issue(TypedDict, total=False):
-    """Audit / Review 输出的结构化问题。"""
+    """Audit / Review输出的结构化问题。"""
 
     id: int
     # fix（确实写错，自动改）/ decision（前后冲突，要作者拍板）/
     # advice（没写错但可以更好、以及所有代码问题，只写批注）
     kind: str
-    # kind=decision 时给出的可选项（2~3 条），让作者直接挑一个
+    # kind=decision时给出的可选项（2~3条），让作者直接挑一个
     options: list[str]
     # 同一条问题涉及的**全部位置**。
     # "不重复报"指的是同一个问题只写一遍，**不是**标号只能有一个——
@@ -66,7 +66,7 @@ class Issue(TypedDict, total=False):
 
 
 class ReviewResult(TypedDict, total=False):
-    """Review Agent 的独立检查结果。"""
+    """Review Agent的独立检查结果。"""
 
     status: str  # "pass" / "fail"
     summary: str
@@ -80,7 +80,7 @@ class ReviewResult(TypedDict, total=False):
 
 
 class TraceEvent(TypedDict, total=False):
-    """轻量 Trace：记录每个 Agent 的执行情况。"""
+    """轻量Trace：记录每个Agent的执行情况。"""
 
     agent: str
     action: str
@@ -99,7 +99,7 @@ class PaperState(TypedDict, total=False):
     """
     论文修改任务的全局状态。
 
-    每个 Workflow Node 都可以读取 State，并返回“需要更新的字段”。
+    每个Workflow Node都可以读取State，并返回“需要更新的字段”。
     """
 
     # ---------- 任务输入 ----------
@@ -107,7 +107,7 @@ class PaperState(TypedDict, total=False):
     user_request: str
     original_document: str
     current_document: str
-    # 原始 .docx 的路径：改完要写回它（另存副本），所以必须留住"原文件"
+    # 原始 .docx的路径：改完要写回它（另存副本），所以必须留住"原文件"
     source_docx: str
     visual_review: bool
     final_review_ready: bool
@@ -138,9 +138,9 @@ class PaperState(TypedDict, total=False):
     issue_counter: int
 
     # ---------- 文档模型与补丁 ----------
-    # 文档版本号：每次应用补丁 +1（用来串起新旧 span ID）
+    # 文档版本号：每次应用补丁 +1（用来串起新旧span ID）
     document_version: int
-    # 当前文档的 span 索引（精简：不含全文）
+    # 当前文档的span索引（精简：不含全文）
     spans: list[dict[str, Any]]
     # 本轮提出的补丁（一次性全部产出，用户在清单上一次性勾选）
     proposed_patches: list[dict[str, Any]]
@@ -165,12 +165,12 @@ class PaperState(TypedDict, total=False):
     # 例如：{"id": "R1", "kind": "rule", "text": "全文统一把「土豆」写成「马铃薯」", ...}
     user_rules: list[dict[str, Any]]
     # 用户是否已经对"前后矛盾"拍过板。
-    # 必须在这里声明：LangGraph 只保留 State 里声明过的字段，
+    # 必须在这里声明：LangGraph只保留State里声明过的字段，
     # 没声明的键会被**静默丢弃**（曾经因此让决策闸门反复触发）。
     decisions: bool
-    # 用户在"写入 Word 前的最后一次确认"里剔除掉的补丁编号（不写进 Word）
+    # 用户在"写入Word前的最后一次确认"里剔除掉的补丁编号（不写进Word）
     excluded_patch_ids: list[str]
-    # 兼容字段：active 要求的纯文本列表（旧代码 / 报告仍在读）
+    # 兼容字段：active要求的纯文本列表（旧代码 / 报告仍在读）
     human_constraints: list[str]
     human_feedback: str
     human_decision: str  # approve / reject
@@ -195,7 +195,7 @@ class PaperState(TypedDict, total=False):
     # ---------- 多轮会话 ----------
     turn: int
     turn_started_at: str
-    # 每轮的输入与结果（由 follow_up 整体覆盖，不使用累加器）
+    # 每轮的输入与结果（由follow_up整体覆盖，不使用累加器）
     turns: list[dict[str, Any]]
     conversation: list[dict[str, Any]]
 
@@ -207,7 +207,7 @@ class PaperState(TypedDict, total=False):
     final_report: str
     report_path: str
     document_path: str
-    # 带 Word 修订痕迹与批注的 .docx 副本
+    # 带Word修订痕迹与批注的 .docx副本
     docx_path: str
     redline_summary: dict[str, Any]
 
@@ -219,7 +219,7 @@ def initial_state(
     run_id: str = "adhoc",
     max_iterations: int = 3,
 ) -> PaperState:
-    """构造一个可运行的初始 State。"""
+    """构造一个可运行的初始State。"""
 
     return PaperState(
         run_id=run_id,

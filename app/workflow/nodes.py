@@ -1,14 +1,14 @@
 """
-LangGraph Node 层。
+LangGraph Node层。
 
-每个 Node 只做三件事：
+每个Node只做三件事：
 
-1. 调用对应的 Agent；
-2. 处理异常（单个 Agent 失败不能拖垮整条 Workflow，需要降级）；
-3. 写回 State（包含 Trace 事件）。
+1. 调用对应的Agent；
+2. 处理异常（单个Agent失败不能拖垮整条Workflow，需要降级）；
+3. 写回State（包含Trace事件）。
 
-Human Approval 不是一个 Agent，而是这里的一个人工确认节点，
-通过 LangGraph 的 interrupt 机制暂停 Workflow，等用户输入后再恢复。
+Human Approval不是一个Agent，而是这里的一个人工确认节点，
+通过LangGraph的interrupt机制暂停Workflow，等用户输入后再恢复。
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ def _logger(logger: Callable[[str], None] | None = None) -> Callable[[str], None
 
 
 def _event(state: Any, action: str, *, ok: bool = True, **extra: Any) -> dict[str, Any]:
-    """构造一条写进 State 的 Trace 事件（流程类，不计入 LLM 统计）。"""
+    """构造一条写进State的Trace事件（流程类，不计入LLM统计）。"""
 
     return {
         "agent": "workflow",
@@ -100,7 +100,7 @@ def orchestrator_node(state: Any, *, logger: Callable[[str], None] | None = None
     except Exception as exc:  # noqa: BLE001 - 规划失败必须降级
         log(f"[Orchestrator] 规划异常：{type(exc).__name__}: {exc}")
         update = orchestrator_agent.fallback_plan(state)
-        update["errors"] = [f"Orchestrator 规划异常：{type(exc).__name__}: {exc}"]
+        update["errors"] = [f"Orchestrator规划异常：{type(exc).__name__}: {exc}"]
 
     return {
         **update,
@@ -122,7 +122,7 @@ def audit_node(state: Any, *, logger: Callable[[str], None] | None = None) -> di
             "audit_findings": [],
             "audit_failed": True,
             "audit_meta": {"error": str(exc)},
-            "errors": [f"Audit 审查异常：{type(exc).__name__}: {exc}"],
+            "errors": [f"Audit审查异常：{type(exc).__name__}: {exc}"],
         }
 
     if state.get("visual_review"):
@@ -147,7 +147,7 @@ def audit_node(state: Any, *, logger: Callable[[str], None] | None = None) -> di
                 issue["audit_anchor_text"] = span.text if span else issue.get("evidence", "")
                 deferred.append(dict(issue))
         update["deferred_advice"] = deferred
-    # 保留兼容元数据；实际只有 decision findings 会进入人工确认。
+    # 保留兼容元数据；实际只有decision findings会进入人工确认。
     issue_gate = get_settings().workflow.issue_gate
     update["issue_gate"] = issue_gate
     if issue_gate:
@@ -178,13 +178,13 @@ def revision_node(state: Any, *, logger: Callable[[str], None] | None = None) ->
     log = _logger(logger)
     try:
         update = revision_agent.run(state, recorder=_recorder(state), logger=log)
-    except Exception as exc:  # noqa: BLE001 - 提补丁失败时保留原文，交给 Review 判断
+    except Exception as exc:  # noqa: BLE001 - 提补丁失败时保留原文，交给Review判断
         log(f"[Revision] 提出补丁异常：{type(exc).__name__}: {exc}")
         update = {
             "proposed_patches": [],
             "patch_stats": {},
             "revision_summary": f"本轮提出补丁失败：{exc}",
-            "errors": [f"Revision 提出补丁异常：{type(exc).__name__}: {exc}"],
+            "errors": [f"Revision提出补丁异常：{type(exc).__name__}: {exc}"],
         }
 
     return {
@@ -202,12 +202,12 @@ def revision_node(state: Any, *, logger: Callable[[str], None] | None = None) ->
 
 def issue_review_node(state: Any, *, logger: Callable[[str], None] | None = None) -> dict[str, Any]:
     """
-    Audit 之后的问题闸门：逐条列出问题，问用户"有没有要忽略的"。
+    Audit之后的问题闸门：逐条列出问题，问用户"有没有要忽略的"。
 
-    用户的决定会**持久存进 user_rules**（kind=ignore，带指纹），
+    用户的决定会**持久存进user_rules**（kind=ignore，带指纹），
     因此下一轮重新审查时不会再问同一批问题，除非用户自己改主意。
 
-    恢复时传入的 payload 支持：
+    恢复时传入的payload支持：
 
         {"ignore_ids": [2, 4]}            # 这几条不改
         {"ignore_all": true}              # 全部不改
@@ -282,8 +282,8 @@ def issue_review_node(state: Any, *, logger: Callable[[str], None] | None = None
         "instruction": (
             "以下位置前后矛盾——**以哪一处为准由你决定**"
             "（实验事实在你手上，模型看不到）。"
-            "把你的判断写下来，例如「温度系数以 0.07 为准」"
-            "「96.67% 是 6-way 5-shot 的分类准确率」；"
+            "把你的判断写下来，例如「温度系数以0.07为准」"
+            "「96.67% 是6-way 5-shot的分类准确率」；"
             "直接回车 = 这些先不改。"
         ),
         "defaults": {"ignore_ids": [], "rules": []},
@@ -306,7 +306,7 @@ def issue_review_node(state: Any, *, logger: Callable[[str], None] | None = None
     return {
         **update,
         # 标记"已经问过"，避免同一批矛盾被反复拿出来问。
-        # 用户的判断已经作为 user_rules 存下来了，会自动进入 Revision 的上下文。
+        # 用户的判断已经作为user_rules存下来了，会自动进入Revision的上下文。
         "decisions": True,
         "trace": [
             _event(
@@ -326,7 +326,7 @@ def patch_review_node(state: Any, *, logger: Callable[[str], None] | None = None
     这是默认流程里唯一必需的人工节点（问题闸门默认关闭），
     因此用户只会被问一次：看看这些改动，勾选你要的。
 
-    恢复时传入的 payload 形如：
+    恢复时传入的payload形如：
 
         {"accept_all": True}                      # 全部接受（默认）
         {"accepted_ids": ["patch-001", "patch-003"]}   # 只接受这几条
@@ -338,8 +338,8 @@ def patch_review_node(state: Any, *, logger: Callable[[str], None] | None = None
     patches = state.get("proposed_patches") or []
     decidable = [patch for patch in patches if patch.get("status") == STATUS_PROPOSED]
 
-    # 默认不打断用户：Revision 已经在清单里写清了「原文 / 准备修改为 / 原因」，
-    # 需要人拍板的"前后矛盾"在 Audit 之后也问过一次了，这里再让用户逐条勾一遍是重复劳动。
+    # 默认不打断用户：Revision已经在清单里写清了「原文 / 准备修改为 / 原因」，
+    # 需要人拍板的"前后矛盾"在Audit之后也问过一次了，这里再让用户逐条勾一遍是重复劳动。
     if state.get("visual_review") or not get_settings().workflow.patch_gate:
         for patch in patches:
             log(_patch_line(patch))
@@ -347,7 +347,7 @@ def patch_review_node(state: Any, *, logger: Callable[[str], None] | None = None
         stats = update.get("patch_stats") or {}
         log(
             f"[Revision] 本轮 {stats.get('accepted', 0)} 条改动直接应用"
-            "（补丁闸门已关闭；如需逐条确认请设 PRA_PATCH_GATE=1）。"
+            "（补丁闸门已关闭；如需逐条确认请设PRA_PATCH_GATE=1）。"
         )
         return {
             **update,
@@ -491,14 +491,14 @@ def review_node(state: Any, *, logger: Callable[[str], None] | None = None) -> d
         update = {
             "review_result": {
                 "status": "fail",
-                "summary": f"Review 复核异常：{exc}",
+                "summary": f"Review复核异常：{exc}",
                 "remaining_issues": [],
                 "constraint_violations": [],
                 "dimension_scores": {},
                 "confidence": 0.0,
                 "error": str(exc),
             },
-            "errors": [f"Review 复核异常：{type(exc).__name__}: {exc}"],
+            "errors": [f"Review复核异常：{type(exc).__name__}: {exc}"],
         }
 
     status = (update.get("review_result") or {}).get("status", "fail")
@@ -524,9 +524,9 @@ def report_node(state: Any, *, logger: Callable[[str], None] | None = None) -> d
     汇总报告并落盘。
 
     这里是**唯一一次**把改动交给用户确认的地方：前面每一轮都在内存里改文本
-    （不然下一轮 Audit 看到的还是旧稿），但**Word 文件只在最后写一次**。
+    （不然下一轮Audit看到的还是旧稿），但**Word文件只在最后写一次**。
     所以确认也只需要一次——把所有轮次要写的改动一起列出来，
-    用户剔除掉的那几条不写进 Word。
+    用户剔除掉的那几条不写进Word。
     """
 
     log = _logger(logger)
@@ -563,7 +563,7 @@ def report_node(state: Any, *, logger: Callable[[str], None] | None = None) -> d
 
 def _confirm_before_writing(state: Any, log: Callable[[str], None]) -> dict[str, Any]:
     """
-    写入 Word 之前的最后一次确认。
+    写入Word之前的最后一次确认。
 
     没有改动就直接过；有改动就把**跨轮次的全部改动**列成
     「问题 / 改为什么 / 原因」一次性给用户看，让他剔除不要的。
@@ -630,11 +630,11 @@ def _confirm_before_writing(state: Any, log: Callable[[str], None]) -> dict[str,
         "turn": int(state.get("turn", 1)),
         "patch_count": len(patches),
         # 把"这条改动是冲着哪个问题去的"一起带上：
-        # 用户最后看到的是「问题 / 改为什么 / 原因」三行，缺了 problem 就只剩分类。
+        # 用户最后看到的是「问题 / 改为什么 / 原因」三行，缺了problem就只剩分类。
         "patches": _merge_unification_items([_confirm_item(patch, state) for patch in patches]),
         "instruction": (
-            "以上是本次全部改动，**确认后写入 Word 副本**（原文件不动）。"
-            "要剔除哪几条就输入编号（例如 2,5）；直接回车 = 全部写入；none = 都不写入。"
+            "以上是本次全部改动，**确认后写入Word副本**（原文件不动）。"
+            "要剔除哪几条就输入编号（例如2,5）；直接回车 = 全部写入；none = 都不写入。"
         ),
         "defaults": {"excluded_ids": list(state.get("excluded_patch_ids") or [])},
     }
@@ -642,7 +642,7 @@ def _confirm_before_writing(state: Any, log: Callable[[str], None]) -> dict[str,
     payload = interrupt(request)
     excluded = _excluded_ids(payload, patches)
     if excluded:
-        log(f"[Human] 已剔除 {len(excluded)} 条改动，不会写入 Word：{'、'.join(excluded)}")
+        log(f"[Human] 已剔除 {len(excluded)} 条改动，不会写入Word：{'、'.join(excluded)}")
     else:
         log(f"[Human] 确认写入 {len(patches)} 条改动。")
     return {**state, "excluded_patch_ids": excluded}
@@ -668,9 +668,9 @@ def _merge_unification_items(items: list[dict[str, Any]]) -> list[dict[str, Any]
     """
     把"同一个统一口径"下的几十条补丁**合并成一条展示**。
 
-    一次"全文统一 MoCo→MOCO"会产生 47 条补丁（每处一条，Word 里要逐处留痕）。
-    让用户在确认清单里读 47 行没有意义——合成一条、带上处数和段落列表，
-    **Word 里仍然是 47 处独立的修订痕迹**，可以逐条接受/拒绝。
+    一次"全文统一MoCo→MOCO"会产生47条补丁（每处一条，Word里要逐处留痕）。
+    让用户在确认清单里读47行没有意义——合成一条、带上处数和段落列表，
+    **Word里仍然是47处独立的修订痕迹**，可以逐条接受/拒绝。
     """
 
     merged: list[dict[str, Any]] = []

@@ -1,14 +1,14 @@
 """
-轻量 Trace / 可观测性。
+轻量Trace / 可观测性。
 
-记录每个 Agent 的执行时间（latency）、重试次数（attempts）、
-Token 消耗、成功 / 失败与错误信息。
+记录每个Agent的执行时间（latency）、重试次数（attempts）、
+Token消耗、成功 / 失败与错误信息。
 
 输出三个地方：
 
-1. 追加写入 data/runs/<run_id>/trace.jsonl（每行一个事件，方便后期分析）；
-2. 提供 TraceRecorder.summary() 供 Report 使用；
-3. 精简后写入 State 的 trace 字段。
+1. 追加写入data/runs/<run_id>/trace.jsonl（每行一个事件，方便后期分析）；
+2. 提供TraceRecorder.summary() 供Report使用；
+3. 精简后写入State的trace字段。
 """
 
 from __future__ import annotations
@@ -24,14 +24,14 @@ from app.config import get_settings
 
 
 def utc_now() -> str:
-    """当前 UTC 时间（ISO 格式）。"""
+    """当前UTC时间（ISO格式）。"""
 
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 @dataclass
 class TraceRecord:
-    """一次 Agent 调用的观测记录。"""
+    """一次Agent调用的观测记录。"""
 
     run_id: str
     agent: str
@@ -49,7 +49,7 @@ class TraceRecord:
     extra: dict[str, Any] = field(default_factory=dict)
 
     def to_state(self) -> dict[str, Any]:
-        """转成写进 State 的精简事件。"""
+        """转成写进State的精简事件。"""
 
         event: dict[str, Any] = {
             "agent": self.agent,
@@ -73,7 +73,7 @@ class TraceRecord:
 
 
 class TraceRecorder:
-    """按 run_id 收集 trace 事件。"""
+    """按run_id收集trace事件。"""
 
     def __init__(self, run_id: str, path: Path | None = None) -> None:
         self.run_id = run_id
@@ -117,7 +117,7 @@ class TraceRecorder:
     # ---------- 统计 ----------
 
     def summary(self) -> dict[str, Any]:
-        """按 Agent 聚合的统计信息。"""
+        """按Agent聚合的统计信息。"""
 
         events = self.events()
         per_agent: dict[str, dict[str, Any]] = {}
@@ -166,7 +166,7 @@ _RECORDERS_LOCK = threading.Lock()
 
 
 def get_recorder(run_id: str, *, persist: bool = True) -> TraceRecorder:
-    """获取（或创建）某个 run 的 TraceRecorder。"""
+    """获取（或创建）某个run的TraceRecorder。"""
 
     key = run_id or "adhoc"
     with _RECORDERS_LOCK:
@@ -183,9 +183,9 @@ def get_recorder(run_id: str, *, persist: bool = True) -> TraceRecorder:
 
 def reset_recorders(run_id: str | None = None) -> None:
     """
-    清理 recorder 注册表。
+    清理recorder注册表。
 
-    传入 run_id 时只清掉这一个（多任务并发时必须这样，
+    传入run_id时只清掉这一个（多任务并发时必须这样，
     否则一个任务启动会清掉其它任务正在累积的统计）；
     不传时清空全部（测试用）。
     """

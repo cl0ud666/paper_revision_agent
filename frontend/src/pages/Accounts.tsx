@@ -48,7 +48,7 @@ export function Accounts() {
               autoComplete="new-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="至少 6 位"
+              placeholder="至少6位"
             />
           </label>
           <label>

@@ -3,19 +3,19 @@
 
 为什么需要它：
 现在的修改是“把原文片段拿去字符串匹配”，位置不稳、有歧义时只能猜。
-这一层把文档切成**有稳定 ID 的块**（span），Agent 的每一条修改都必须引用 ID，
+这一层把文档切成**有稳定ID的块**（span），Agent的每一条修改都必须引用ID，
 于是“定位、拒绝、回溯”才有依据。
 
-ID 设计（两个层次）：
+ID设计（两个层次）：
 
-1. **稳定 ID**：``p3f9a2c1`` = 类型前缀 + 内容哈希前 8 位。
-   好处：改动**别的**段落时，本段落的 ID 不变，历史补丁依然能对上；
-   坏处：本段落被改后 ID 会变——所以我们会在补丁里记录
-   ``span_id_after``，把新旧 ID 连成可回溯的链。
-2. **可读标签**：``P07`` / ``H02`` / ``T01``，只在单次 Prompt 里使用，
-   模型写标签比写哈希方便，我们负责把标签解析回稳定 ID。
+1. **稳定ID**：``p3f9a2c1`` = 类型前缀 + 内容哈希前8位。
+   好处：改动**别的**段落时，本段落的ID不变，历史补丁依然能对上；
+   坏处：本段落被改后ID会变——所以我们会在补丁里记录
+   ``span_id_after``，把新旧ID连成可回溯的链。
+2. **可读标签**：``P07`` / ``H02`` / ``T01``，只在单次Prompt里使用，
+   模型写标签比写哈希方便，我们负责把标签解析回稳定ID。
 
-句子级定位：span 内可以按句切分，得到 ``p3f9a2c1:S2`` 这样的句子 ID；
+句子级定位：span内可以按句切分，得到``p3f9a2c1:S2``这样的句子ID；
 补丁引用到句级时，用“span + 句子序号 + 原文引用”三重校验，避免改错位置。
 """
 
@@ -28,7 +28,7 @@ from typing import Any, Iterable
 
 from app.utils.text import estimate_tokens, is_heading, normalize_whitespace
 
-# 类型前缀（稳定 ID 用）与可读标签前缀
+# 类型前缀（稳定ID用）与可读标签前缀
 KIND_PREFIX = {"heading": "h", "paragraph": "p", "table": "t", "list": "l"}
 LABEL_PREFIX = {"heading": "H", "paragraph": "P", "table": "T", "list": "L"}
 KIND_NAMES = {"heading": "标题", "paragraph": "段落", "table": "表格", "list": "列表"}
@@ -45,7 +45,7 @@ ZONE_NAMES = {
     "appendix": "附录",
 }
 
-# 默认审查范围：摘要 + 正文（可改 PRA_AUDIT_SCOPE=body+refs / all）
+# 默认审查范围：摘要 + 正文（可改PRA_AUDIT_SCOPE=body+refs / all）
 AUDIT_SCOPES = {
     "body": {"abstract", "body"},
     "body+refs": {"abstract", "body", "references"},
@@ -100,7 +100,7 @@ def split_sentences(text: str) -> list[str]:
 
 
 def sentence_id(span_id: str, index: int) -> str:
-    """句子 ID：``p3f9a2c1:S2``（index 从 1 开始）。"""
+    """句子ID：``p3f9a2c1:S2``（index从1开始）。"""
 
     return f"{span_id}:S{index}"
 
@@ -239,10 +239,10 @@ def _stable_id(kind: str, text: str, seen: dict[str, int]) -> str:
 
 def build_spans(text: str, *, version: int = 1) -> list[Span]:
     """
-    把文档解析成 Spans。
+    把文档解析成Spans。
 
-    同一个文档版本反复解析会得到完全相同的 ID（幂等），
-    因此补丁可以安全地按 ID 引用。
+    同一个文档版本反复解析会得到完全相同的ID（幂等），
+    因此补丁可以安全地按ID引用。
     """
 
     if not text or not text.strip():
@@ -373,7 +373,7 @@ def _classify_zones(spans: list[Span]) -> None:
                 elif current == "toc" and _looks_like_toc_line(text):
                     current = "toc"
                 else:
-                    # 有点编号的章节标题（如 "2 相关工作"）就是正文开始
+                    # 有点编号的章节标题（如 "2相关工作"）就是正文开始
                     current = "body"
                     body_started = True
             else:
@@ -412,7 +412,7 @@ def _classify_zones(spans: list[Span]) -> None:
 
 
 def select_auditable(spans: Iterable[Span], scope: str = "body") -> list[Span]:
-    """按审查范围筛出真正要送给 Audit 的块。"""
+    """按审查范围筛出真正要送给Audit的块。"""
 
     allowed = AUDIT_SCOPES.get(scope) or AUDIT_SCOPES["body"]
     return [span for span in spans if span.zone in allowed and span.auditable]
@@ -444,7 +444,7 @@ def resolve_span(
     span_id: str = "",
     label: str = "",
 ) -> Span | None:
-    """按稳定 ID 优先、可读标签兜底地找到 span。"""
+    """按稳定ID优先、可读标签兜底地找到span。"""
 
     spans = list(spans)
     if span_id:
@@ -475,7 +475,7 @@ def resolve_span(
 
 
 def _split_label(label: str) -> tuple[str, str] | None:
-    """把 "P01" 拆成 ("P", "1")；不是这种形式就返回 None。"""
+    """把 "P01" 拆成 ("P", "1")；不是这种形式就返回None。"""
 
     match = re.match(r"^([A-Z])(\d+)$", (label or "").strip().upper())
     if not match:
@@ -484,7 +484,7 @@ def _split_label(label: str) -> tuple[str, str] | None:
 
 
 def render_outline(spans: Iterable[Span], *, max_spans: int = 60) -> str:
-    """紧凑大纲（给 Orchestrator / Audit 头部看）。"""
+    """紧凑大纲（给Orchestrator / Audit头部看）。"""
 
     spans = list(spans)
     if not spans:
@@ -507,10 +507,10 @@ def render_annotated(
     with_sentences_for: Iterable[str] = (),
 ) -> str:
     """
-    带 ID 的正文（给 Revision / Review 用）。
+    带ID的正文（给Revision / Review用）。
 
-    被“点名”的 span 会额外标出句子编号（如 ``(2)``），
-    这样模型可以精确到句（``P07:S2``），而其它块只显示块级标签以省 Token。
+    被“点名”的span会额外标出句子编号（如``(2)``），
+    这样模型可以精确到句（``P07:S2``），而其它块只显示块级标签以省Token。
     """
 
     focus = {str(item) for item in with_sentences_for}
@@ -530,7 +530,7 @@ def render_annotated(
 
 
 def index_summary(spans: Iterable[Span], *, limit: int = 200) -> list[dict[str, Any]]:
-    """写进 State 的精简索引（不含全文）。"""
+    """写进State的精简索引（不含全文）。"""
 
     return [span.to_json() for span in list(spans)[:limit]]
 
@@ -546,11 +546,11 @@ def chunk_spans(
     max_chunks: int | None = None,
 ) -> list[list[Span]]:
     """
-    按 span 边界分块（供 Audit 逐块审查）。
+    按span边界分块（供Audit逐块审查）。
 
     为什么不再按字符切：按字符切会把段落/表格从中间截断，
-    模型引用的 span 标签就对不上了。按 span 分组可以保证
-    “每个分块里的内容都是完整的、带 ID 的块”。
+    模型引用的span标签就对不上了。按span分组可以保证
+    “每个分块里的内容都是完整的、带ID的块”。
     """
 
     spans = list(spans)
@@ -583,7 +583,7 @@ def chunk_spans(
 
 @dataclass
 class SpanDiff:
-    """重新索引后的映射结果（用于回溯新旧 ID）。"""
+    """重新索引后的映射结果（用于回溯新旧ID）。"""
 
     label_to_id: dict[str, str] = field(default_factory=dict)
     id_to_label: dict[str, str] = field(default_factory=dict)

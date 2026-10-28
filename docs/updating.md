@@ -1,6 +1,6 @@
 # 更新服务器上的应用
 
-适用于已经通过 `deploy/compose.yml` 和 `deploy/compose.public.yml` 运行的 Linux 部署。先完成本地回归和一次新任务验收，再发布；已完成任务不会因更新自动重跑。
+适用于已经通过`deploy/compose.yml`和`deploy/compose.public.yml`运行的Linux部署。先完成本地回归和一次新任务验收，再发布；已完成任务不会因更新自动重跑。
 
 ## 打包和上传
 
@@ -11,9 +11,9 @@ python scripts/check_repository.py
 python scripts/package_agent_update.py
 ```
 
-输出包在 `artifacts/`，命令显示实际文件名及 SHA-256。包含源码、前端配置、Dockerfile、Nginx 配置和数据库迁移；不包含环境密钥、Compose 配置、论文或数据库。Compose 有变更时应单独对照修改，不能用本地配置覆盖线上环境。
+输出包在`artifacts/`，命令显示实际文件名及SHA-256。包含源码、前端配置、Dockerfile、Nginx配置和数据库迁移；不包含环境密钥、Compose配置、论文或数据库。Compose有变更时应单独对照修改，不能用本地配置覆盖线上环境。
 
-使用 Workbench 上传到自己有写入权限的目录，例如 `/home/admin/`。以下命令里的 `UPDATE.zip` 替换成实际上传的文件名。
+使用Workbench上传到自己有写入权限的目录，例如`/home/admin/`。以下命令里的`UPDATE.zip`替换成实际上传的文件名。
 
 ## 备份
 
@@ -28,13 +28,13 @@ sudo tar --exclude='frontend/node_modules' --exclude='frontend/dist' \
   app frontend migrations alembic.ini main.py requirements.txt requirements-web.txt deploy
 ```
 
-备份含部署密码，因此备份目录只允许 root 访问。迁移前单独备份 PostgreSQL；下面通过同一个 root shell 写入受限目录：
+备份含部署密码，因此备份目录只允许root访问。迁移前单独备份PostgreSQL；下面通过同一个root shell写入受限目录：
 
 ```bash
 sudo sh -c 'umask 077; docker compose --env-file deploy/.env -f deploy/compose.yml -f deploy/compose.public.yml exec -T postgres pg_dump -U paper_agent -d paper_agent -Fc > "/opt/paperfixer-backups/database-$(date +%Y%m%d-%H%M%S).dump"'
 ```
 
-另外按部署实际卷名备份 MinIO 和 workspace。数据库备份不能代替文件备份，也不能只备份源码就声称能恢复全部用户数据。
+另外按部署实际卷名备份MinIO和workspace。数据库备份不能代替文件备份，也不能只备份源码就声称能恢复全部用户数据。
 
 ## 构建与切换
 
@@ -58,10 +58,10 @@ sudo docker compose --env-file deploy/.env -f deploy/compose.yml -f deploy/compo
 sudo docker compose --env-file deploy/.env -f deploy/compose.yml -f deploy/compose.public.yml ps
 ```
 
-检查健康状态、登录、上传、两类确认及下载；用合成小论文验证，不只看首页 HTTP 200。
+检查健康状态、登录、上传、两类确认及下载；用合成小论文验证，不只看首页HTTP 200。
 
 ## 回退
 
 保留旧镜像和上述备份，验证新版本前不要清理镜像。没有数据库结构变化时，可从对应源码备份恢复受影响文件并重新构建。涉及迁移时先判断旧代码是否兼容新结构，必要时在维护窗口恢复数据库和相应文件备份；不要盲目回滚迁移。
 
-不要执行 `docker compose down -v`，它会删除持久化卷。更换管理员密码使用 `python -m app.web.manage reset-password admin` 管理命令，单独修改 `.env` 不会重置已有账号密码。
+不要执行`docker compose down -v`，它会删除持久化卷。更换管理员密码使用`python -m app.web.manage reset-password admin`管理命令，单独修改`.env`不会重置已有账号密码。

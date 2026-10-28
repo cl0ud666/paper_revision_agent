@@ -69,7 +69,7 @@ class TestPendingRecovery(DeploymentTestCase):
         wait_for(session, {"awaiting_human"})
         original_request = session.pending
         self.assertEqual(original_request["type"], "final_confirm")
-        # 关闭 SQLite 连接，确保后面的恢复真正重建持久化 Checkpointer。
+        # 关闭SQLite连接，确保后面的恢复真正重建持久化Checkpointer。
         reset_checkpointers()
         reset_recorders()
         recovered = RunManager().get(session.run_id)
@@ -328,7 +328,7 @@ class TestInteractionProtocol(unittest.TestCase):
 class TestPostgresConfiguration(DeploymentTestCase):
     def setUp(self):
         super().setUp()
-        # 先导入真实的类，再替换工厂；避免第三方 isinstance 引用到 Mock。
+        # 先导入真实的类，再替换工厂；避免第三方isinstance引用到Mock。
         importlib.import_module("langgraph.checkpoint.postgres")
 
     def test_postgres_pool_cached_per_process_and_closed(self):

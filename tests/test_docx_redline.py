@@ -1,5 +1,5 @@
 """
-Word 回写测试：文字与 XML 的锚点、Word 原生修订痕迹、批注，以及各种边界。
+Word回写测试：文字与XML的锚点、Word原生修订痕迹、批注，以及各种边界。
 
 这里刻意把论文里最容易出问题的东西放进同一份文档：
 标题层级、公式（OMML）、内嵌图片、表格、带换行的代码段。
@@ -32,7 +32,7 @@ from app.document.patches import (
 from app.document.spans import build_spans
 from app.utils.loaders import load_bytes
 
-try:  # python-docx / lxml 都是可选依赖
+try:  # python-docx / lxml都是可选依赖
     from docx import Document
     from docx.oxml import OxmlElement
 
@@ -48,7 +48,7 @@ FORMULA_TAIL = "定义为 "
 
 
 def _png() -> bytes:
-    """一张 2x2 的 PNG（用来测试"段落里的图片"）。"""
+    """一张2x2的PNG（用来测试"段落里的图片"）。"""
 
     size = 2
     raw = b"".join(b"\x00" + b"\xff\x40\x00" * size for _ in range(size))
@@ -185,7 +185,7 @@ class TestDocxReading(unittest.TestCase):
         self.assertTrue(picture.obstacles)
 
     def test_every_span_maps_into_a_block(self) -> None:
-        """段落解析出来的每一个块，都要能落到 Word 的某个段落或表格上。"""
+        """段落解析出来的每一个块，都要能落到Word的某个段落或表格上。"""
 
         source = DocxSource(self.data)
         spans = build_spans(source.text)
@@ -194,7 +194,7 @@ class TestDocxReading(unittest.TestCase):
             block = source.block_at(span.start)
             self.assertIsNotNone(block, f"{span.label} 落不到任何块上")
             self.assertGreaterEqual(span.start, block.start)
-            # 块的 end 是"下一行开始"，标题这类块会多带一个换行
+            # 块的end是"下一行开始"，标题这类块会多带一个换行
             self.assertLessEqual(span.end, block.end + 1)
             self.assertIn(span.text, block.text)
 
@@ -255,7 +255,7 @@ class TestRedline(unittest.TestCase):
         self.assertIn("Cora、Citeseer", document_xml)
         self.assertIn("<w:trackRevisions/>", part(out_bytes, "word/settings.xml"))
 
-        # 批注：正文里有三件套锚点，comments.xml 里有批注正文
+        # 批注：正文里有三件套锚点，comments.xml里有批注正文
         self.assertIn("让表述更具体", part(out_bytes, "word/comments.xml"))
         self.assertIn("commentRangeStart", document_xml)
         self.assertIn("commentRangeEnd", document_xml)
@@ -376,7 +376,7 @@ class TestRedline(unittest.TestCase):
         self.assertIn("87.4", part(out_bytes, "word/document.xml"))
 
     def test_change_across_table_cells_is_refused(self) -> None:
-        """跨单元格的改动（Markdown 竖线在 Word 里不存在）必须拒绝。"""
+        """跨单元格的改动（Markdown竖线在Word里不存在）必须拒绝。"""
 
         spans = build_spans(self.text)
         table_span = next(span for span in spans if span.label == "T01")
@@ -541,7 +541,7 @@ class TestRedline(unittest.TestCase):
 
     def test_many_changes_in_one_paragraph(self) -> None:
         """
-        同一段里的多处改动：Word 里一段常常只有一个 run，
+        同一段里的多处改动：Word里一段常常只有一个run，
         必须先按改动边界切开，否则第一处就会把后面几处的目标拆掉。
         """
 
@@ -570,7 +570,7 @@ class TestRedline(unittest.TestCase):
         self.assertEqual(result.text, outcome.document)
 
     def test_change_spanning_several_runs(self) -> None:
-        """被 Word 拆成很多个 run 的文字，也要能整段替换。"""
+        """被Word拆成很多个run的文字，也要能整段替换。"""
 
         document = Document()
         paragraph = document.add_paragraph()
@@ -644,8 +644,8 @@ class TestRedline(unittest.TestCase):
 
     def test_document_without_settings_part_is_wired_up(self) -> None:
         """
-        原文件没有 settings.xml 时（有些导出器就是不给），
-        要自己补上 settings 部件、关系与内容类型，否则 Word 会报文件损坏。
+        原文件没有settings.xml时（有些导出器就是不给），
+        要自己补上settings部件、关系与内容类型，否则Word会报文件损坏。
         """
 
         buffer = io.BytesIO()
@@ -667,7 +667,7 @@ class TestRedline(unittest.TestCase):
         self.assertIn("/word/settings.xml", part(out_bytes, "[Content_Types].xml"))
 
     def test_output_reopens_as_a_normal_word_file(self) -> None:
-        """产物必须是一份"正常"的 docx：能被常规库重新打开并读到批注与痕迹。"""
+        """产物必须是一份"正常"的docx：能被常规库重新打开并读到批注与痕迹。"""
 
         new_text, rounds = applied_round(
             self.text, label="P01", quote="更好的效果", replace="更明显的效果"
@@ -683,7 +683,7 @@ class TestRedline(unittest.TestCase):
         target.write_bytes(out_bytes)
         reopened = Document(str(target))
         paragraphs = [paragraph.text for paragraph in reopened.paragraphs]
-        # python-docx 的 paragraph.text 只认段落直属的 <w:r>：
+        # python-docx的paragraph.text只认段落直属的 <w:r>：
         # 被删掉的字在 <w:del> 里、新插入的字在 <w:ins> 里，它都看不到。
         # 所以这里应该正好剩下"改动范围之外"的那两截文字。
         self.assertIn("本文提出的方法在三个公开数据集上取得了。", paragraphs)
@@ -701,12 +701,12 @@ class TestRedline(unittest.TestCase):
 
 
 class TestReplay(unittest.TestCase):
-    """回写靠"重放"：必须按轮次、按顺序取"真正落实"的改动（不需要 Word 环境）。"""
+    """回写靠"重放"：必须按轮次、按顺序取"真正落实"的改动（不需要Word环境）。"""
 
     def test_report_wiring_writes_word_copy(self) -> None:
         """
-        接线检查：报告节点落盘时，要顺手把改动写回 Word（另存副本），
-        并把路径与摘要写回 state。
+        接线检查：报告节点落盘时，要顺手把改动写回Word（另存副本），
+        并把路径与摘要写回state。
         """
 
         if not HAS_DOCX:
@@ -778,10 +778,10 @@ class TestReplay(unittest.TestCase):
 
 def add_ref_field(paragraph, instruction: str, result: str) -> None:
     """
-    在段落里插入一个 Word 域（begin / instrText / separate / 结果 / end）。
+    在段落里插入一个Word域（begin / instrText / separate / 结果 / end）。
 
     完全照搬论文里引文序号的样子——[4] 这类不是打上去的字符，
-    而是 REF 交叉引用域，改它要同步后面的参考文献。
+    而是REF交叉引用域，改它要同步后面的参考文献。
     """
 
     from docx.oxml.ns import qn
@@ -802,7 +802,7 @@ def add_ref_field(paragraph, instruction: str, result: str) -> None:
 
 
 def docx_with_citation_field() -> bytes:
-    """正文里带一个引文域：Transformer[4]、GNN——[4] 是 REF 域。"""
+    """正文里带一个引文域：Transformer[4]、GNN——[4] 是REF域。"""
 
     document = Document()
     document.add_paragraph("近年的研究。")
@@ -821,8 +821,8 @@ def docx_with_blank_line_run() -> bytes:
     构造一份"归一化会删字符"的文档。
 
     代码段里有三个连续换行（``a<break><break><break>b``）。
-    整篇归一化会把 ``\\n{3,}`` 压成 ``\\n\\n``——**删掉一个字符**，
-    于是它后面所有块的偏移整体左移。这正是线上那份 217 个块错位的成因。
+    整篇归一化会把``\\n{3,}``压成``\\n\\n``——**删掉一个字符**，
+    于是它后面所有块的偏移整体左移。这正是线上那份217个块错位的成因。
     """
 
     document = Document()
@@ -850,10 +850,10 @@ class TestBlockAlignment(unittest.TestCase):
     """
     块的偏移必须与扁平文本自洽。
 
-    历史 bug：``block.start/end`` 按**归一化前**的长度累加，而 ``self.text``
+    历史bug：``block.start/end``按**归一化前**的长度累加，而``self.text``
     是归一化**之后**的文本。归一化会删字符（连续空行、行尾空白、首尾空白），
     删了之后后面所有块的偏移整体左移，
-    ``block_at(span.start)`` 就会拿到前一个块，让回写层误报
+    ``block_at(span.start)``就会拿到前一个块，让回写层误报
     "这条改动跨了文档结构，需要人工处理"——而补丁本身明明只是句内改字。
     """
 
@@ -877,14 +877,14 @@ class TestBlockAlignment(unittest.TestCase):
         确认这份样本**真的**会触发"归一化删字符"。
 
         没有这条，上面的对齐测试可能在原地空转：
-        如果样本本身不触发删除，旧代码也不会错位，测试就抓不到这个 bug。
+        如果样本本身不触发删除，旧代码也不会错位，测试就抓不到这个bug。
         """
 
         from app.utils.text import normalize_document_text
 
         raw = [block.text for block in self.source._collect_blocks()]
         joined = "\n\n".join(raw)
-        # normalize_document_text 正常会补一个结尾换行；被删过字符就会小于 len+1
+        # normalize_document_text正常会补一个结尾换行；被删过字符就会小于len+1
         self.assertLess(
             len(normalize_document_text(joined)),
             len(joined) + 1,
@@ -917,7 +917,7 @@ class TestBlockAlignment(unittest.TestCase):
                 )
 
     def test_patch_after_the_shifted_part_is_still_writable(self) -> None:
-        """端到端：在漂移点**之后**的段落上，普通正文补丁必须还能写回 Word。"""
+        """端到端：在漂移点**之后**的段落上，普通正文补丁必须还能写回Word。"""
 
         spans = build_spans(self.source.text)
         target = next(span for span in spans if "第三段文字" in span.text)
@@ -938,7 +938,7 @@ class TestBlockAlignment(unittest.TestCase):
 @unittest.skipUnless(HAS_DOCX, "未安装 python-docx / lxml")
 class TestCitationFields(unittest.TestCase):
     """
-    引文序号（[4]、[5]）是 Word 交叉引用域，不是普通文字。
+    引文序号（[4]、[5]）是Word交叉引用域，不是普通文字。
 
     规则：**改动范围只要碰到引文域，一律不改**，改成报告，
     原因写清楚"需要同步后面文献引用"——因为改引文要连带改参考文献编号，

@@ -1,12 +1,12 @@
 """
 术语统一：**口径由人定，执行由程序做**。
 
-用户抱怨过的场景：说了"全文统一为 MOCO"，结果只有第一、二章改了，
-后面几章还是 MoCo，而且没有任何说明。
+用户抱怨过的场景：说了"全文统一为MOCO"，结果只有第一、二章改了，
+后面几章还是MoCo，而且没有任何说明。
 
 根因是两层：
 
-1. Revision 只改"被点名的问题"所在的**分块**，别处的 MoCo 它看不见；
+1. Revision只改"被点名的问题"所在的**分块**，别处的MoCo它看不见；
 2. 事后想从补丁反推"MoCo→MOCO"这条词级映射，也只能拿到整句片段。
 
 所以改成：审计阶段由扫描直接给出**全部位置**（`span_labels`），
@@ -55,7 +55,7 @@ class TestVariationIssue(unittest.TestCase):
 
         self.assertEqual(issue["kind"], "decision", "术语统一必须由作者拍板")
         self.assertEqual(issue["source"], "naming_variants")
-        # 选项要**可执行**：下游按"全文统一为 X"做确定性替换
+        # 选项要**可执行**：下游按"全文统一为X"做确定性替换
         self.assertIn("全文统一为 MOCO", issue["options"])
         self.assertIn("全文统一为 MoCo", issue["options"])
         # 标号要是**全部**位置（不是只有一个代表）
@@ -70,7 +70,7 @@ class TestVariationIssue(unittest.TestCase):
 
 
 class TestUnificationPatches(unittest.TestCase):
-    """Revision 阶段：口径来自用户，执行由程序，代码段不碰。"""
+    """Revision阶段：口径来自用户，执行由程序，代码段不碰。"""
 
     def setUp(self) -> None:
         self.spans = build_spans(DOC, version=1)
@@ -97,7 +97,7 @@ class TestUnificationPatches(unittest.TestCase):
             self.assertNotIn(patch.span_id, code_ids, "代码段被改了——用户明确要求代码一律不碰")
 
     def test_quote_is_unique_inside_its_span(self) -> None:
-        """同一段里出现两次时，quote 必须扩窗到唯一，否则补丁会被判歧义。"""
+        """同一段里出现两次时，quote必须扩窗到唯一，否则补丁会被判歧义。"""
 
         patches = _unification_patches(self.spans, [rule("P01：全文统一为 MOCO")])
         by_label: dict[str, list[str]] = {}
@@ -111,7 +111,7 @@ class TestUnificationPatches(unittest.TestCase):
 
 
 class TestPresentationMerge(unittest.TestCase):
-    """呈现：47 条同一口径的补丁在确认清单里合成一条。"""
+    """呈现：47条同一口径的补丁在确认清单里合成一条。"""
 
     def test_same_target_is_merged_into_one_entry(self) -> None:
         from app.workflow.nodes import _merge_unification_items

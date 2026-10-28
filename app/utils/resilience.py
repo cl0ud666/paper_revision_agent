@@ -1,14 +1,14 @@
 """
-异常隔离与熔断（Agent Harness 的可靠性部分）。
+异常隔离与熔断（Agent Harness的可靠性部分）。
 
 三个能力：
 
-1. Timeout：单次 Agent 调用超时后放弃，避免长任务卡死；
+1. Timeout：单次Agent调用超时后放弃，避免长任务卡死；
 2. Retry：指数退避 + 抖动重试；
-3. Circuit Breaker：每个 Agent 独立统计失败，连续失败到阈值后快速失败，
-   避免“坏掉的 Agent 被反复调用”把时间和 Token 全部烧光。
+3. Circuit Breaker：每个Agent独立统计失败，连续失败到阈值后快速失败，
+   避免“坏掉的Agent被反复调用”把时间和Token全部烧光。
 
-注意：熔断是**按 Agent** 生效的，Orchestrator 熔断不影响 Audit。
+注意：熔断是**按Agent** 生效的，Orchestrator熔断不影响Audit。
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ T = TypeVar("T")
 
 
 class AgentError(RuntimeError):
-    """Agent 执行失败的基类。"""
+    """Agent执行失败的基类。"""
 
 
 class CircuitOpenError(AgentError):
@@ -36,7 +36,7 @@ class CircuitOpenError(AgentError):
 
 
 class AgentTimeoutError(AgentError):
-    """Agent 调用超时。"""
+    """Agent调用超时。"""
 
 
 @dataclass
@@ -51,7 +51,7 @@ class RetryPolicy:
 
     def delay_for(self, attempt: int, rand: Callable[[], float] = random.random) -> float:
         """
-        第 attempt 次失败后应等待的秒数（attempt 从 1 开始）。
+        第attempt次失败后应等待的秒数（attempt从1开始）。
         """
 
         raw = min(self.base_delay * math.pow(2, max(0, attempt - 1)), self.max_delay)
@@ -61,7 +61,7 @@ class RetryPolicy:
 
 @dataclass
 class CircuitBreaker:
-    """按 Agent 的熔断器（closed / open / half_open 三态）。"""
+    """按Agent的熔断器（closed / open / half_open三态）。"""
 
     name: str
     failure_threshold: int = 4
@@ -72,7 +72,7 @@ class CircuitBreaker:
     clock: Callable[[], float] = time.monotonic
 
     def check(self) -> None:
-        """调用前检查；熔断打开时抛 CircuitOpenError。"""
+        """调用前检查；熔断打开时抛CircuitOpenError。"""
 
         if self.state != "open":
             return
@@ -83,7 +83,7 @@ class CircuitBreaker:
             return
         remaining = self.recovery_timeout - (self.clock() - opened_at)
         raise CircuitOpenError(
-            f"{self.name} 熔断中，约 {remaining:.0f}s 后重试（连续失败 {self.failures} 次）"
+            f"{self.name} 熔断中，约 {remaining:.0f}s后重试（连续失败 {self.failures} 次）"
         )
 
     def on_success(self) -> None:
@@ -114,14 +114,14 @@ class CircuitBreaker:
 @dataclass
 class AgentGuard:
     """
-    把 Timeout + Retry + CircuitBreaker 组合成统一的调用入口。
+    把Timeout + Retry + CircuitBreaker组合成统一的调用入口。
 
-    线程安全说明：Guard 是**按 Agent 共享的单例**（``get_guard`` 缓存），
-    而 Audit 的分块会并发调用同一个 Guard。熔断器的 ``failures += 1``
-    是"读-改-写"，并发下会丢计数（24 个分块同时失败只记 1 次），
+    线程安全说明：Guard是**按Agent共享的单例**（``get_guard``缓存），
+    而Audit的分块会并发调用同一个Guard。熔断器的``failures += 1``
+    是"读-改-写"，并发下会丢计数（24个分块同时失败只记1次），
     所以这里用一把锁把熔断器的状态变更串起来。
 
-    锁只保护**状态变更**，不包住 ``fn`` 调用，也不包住重试等待，
+    锁只保护**状态变更**，不包住``fn``调用，也不包住重试等待，
     否则并发会退化成串行。
     """
 
@@ -145,9 +145,9 @@ class AgentGuard:
         extra: dict[str, Any] | None = None,
     ) -> T:
         """
-        执行 fn，带重试、超时与熔断。
+        执行fn，带重试、超时与熔断。
 
-        成功返回 fn 的返回值，失败抛出最后一次的异常。
+        成功返回fn的返回值，失败抛出最后一次的异常。
         """
 
         effective_timeout = self.default_timeout if timeout is None else timeout
@@ -295,7 +295,7 @@ class AgentGuard:
 
 
 def _call_with_timeout(fn: Callable[[], T], timeout: float | None) -> T:
-    """在独立线程里执行 fn，超时抛 AgentTimeoutError。"""
+    """在独立线程里执行fn，超时抛AgentTimeoutError。"""
 
     if not timeout or timeout <= 0:
         return fn()
@@ -306,9 +306,9 @@ def _call_with_timeout(fn: Callable[[], T], timeout: float | None) -> T:
         return future.result(timeout=timeout)
     except FutureTimeoutError as exc:
         future.cancel()
-        raise AgentTimeoutError(f"调用超过 {timeout}s 未返回") from exc
+        raise AgentTimeoutError(f"调用超过 {timeout}s未返回") from exc
     finally:
-        # 不等待卡住的线程，避免 Harness 自己被拖死
+        # 不等待卡住的线程，避免Harness自己被拖死
         executor.shutdown(wait=False, cancel_futures=True)
 
 
@@ -317,7 +317,7 @@ _GUARDS_LOCK = threading.Lock()
 
 
 def get_guard(agent: str, *, on_event: Callable[[str], None] | None = None) -> AgentGuard:
-    """获取（或创建）某个 Agent 的 Guard。"""
+    """获取（或创建）某个Agent的Guard。"""
 
     with _GUARDS_LOCK:
         guard = _GUARDS.get(agent)
@@ -346,14 +346,14 @@ def get_guard(agent: str, *, on_event: Callable[[str], None] | None = None) -> A
 
 
 def reset_guards() -> None:
-    """清空 Guard 注册表（测试用）。"""
+    """清空Guard注册表（测试用）。"""
 
     with _GUARDS_LOCK:
         _GUARDS.clear()
 
 
 def guard_snapshots() -> list[dict[str, Any]]:
-    """所有 Agent 的熔断器状态（用于报告与调试）。"""
+    """所有Agent的熔断器状态（用于报告与调试）。"""
 
     with _GUARDS_LOCK:
         return [guard.snapshot() for guard in _GUARDS.values()]

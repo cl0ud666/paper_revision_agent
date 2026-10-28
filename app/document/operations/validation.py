@@ -58,7 +58,7 @@ def validate_operation(action, p):
             or not 5 <= size <= 72
             or size * 2 != int(size * 2)
         ):
-            raise ValueError("字号必须为 5–72 磅，步长为半磅")
+            raise ValueError("字号必须为5–72磅，步长为半磅")
         for key in ("bold", "italic"):
             if key in p and not isinstance(p[key], bool):
                 raise ValueError(f"{key} 必须为布尔值")
@@ -97,16 +97,16 @@ def validate_operation(action, p):
                 raise ValueError("缺少表格格式参数")
             for key in ("border_color", "shading"):
                 if key in p and not re.fullmatch(r"[0-9a-fA-F]{6}", str(p[key])):
-                    raise ValueError("颜色必须是六位 RGB 十六进制值")
+                    raise ValueError("颜色必须是六位RGB十六进制值")
             if "column_widths_twips" in p:
                 if not isinstance(p["column_widths_twips"], list):
                     raise ValueError("列宽必须是数组")
                 for value in p["column_widths_twips"]:
-                    _int(value, "列宽 twips", 100, 20000)
+                    _int(value, "列宽twips", 100, 20000)
     elif action == "insert_paragraphs":
         paragraphs = p.get("paragraphs")
         if not isinstance(paragraphs, list) or not 1 <= len(paragraphs) <= 20:
-            raise ValueError("新增结构需包含 1–20 个具体段落")
+            raise ValueError("新增结构需包含1–20个具体段落")
         for paragraph in paragraphs:
             if (
                 not isinstance(paragraph, dict)
@@ -118,7 +118,7 @@ def validate_operation(action, p):
                 raise ValueError("单段新增内容过长，请拆分")
     elif action == "insert_formula":
         if not isinstance(p.get("latex"), str) or not 1 <= len(p["latex"]) <= 2000:
-            raise ValueError("需要不超过 2000 字的 LaTeX 公式")
+            raise ValueError("需要不超过2000字的LaTeX公式")
         if p.get("position", "after") not in {"before", "after"}:
             raise ValueError("公式仅支持在原文锚点前后插入，不覆盖已有公式/图片")
 
@@ -158,7 +158,7 @@ def describe_operation(action, p):
                 detail[k] += 1
         return (
             names.get(p.get("operation"), "修改表格")
-            + "（行列从 1 开始） "
+            + "（行列从1开始） "
             + json.dumps(detail, ensure_ascii=False)
         )
     if action == "insert_formula":

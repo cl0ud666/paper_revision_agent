@@ -175,7 +175,7 @@ class TestReport(unittest.TestCase):
         self.assertIn("第一轮新文", report)
         self.assertIn("第二轮新文", report)
         self.assertIn("各轮执行情况", report)
-        self.assertIn("修改理由（由 Agent 给出）", report)
+        self.assertIn("修改理由（由Agent给出）", report)
         self.assertIn("把笼统表述改具体", report)
         self.assertIn("被拒绝的改动", report)
         self.assertIn("成本与预算", report)

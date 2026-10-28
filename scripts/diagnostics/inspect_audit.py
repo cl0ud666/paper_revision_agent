@@ -1,5 +1,5 @@
 """
-只读排查脚本：看清"论文被读成了什么"，以及 Audit 报的问题是真问题还是噪声。
+只读排查脚本：看清"论文被读成了什么"，以及Audit报的问题是真问题还是噪声。
 
 用法：python -m scripts.diagnostics.inspect_audit <run_id>
 """
@@ -24,13 +24,13 @@ def main() -> int:
     findings = state.get("audit_findings") or []
 
     print("=" * 78)
-    print(f"文档：{len(document)} 字符，AI 看到的块：{len(spans)} 个")
+    print(f"文档：{len(document)} 字符，AI看到的块：{len(spans)} 个")
 
     print("\n--- 块的类型分布 ---")
     print("   ", dict(Counter(span.get("kind") for span in spans)))
 
     tiny = [span for span in spans if (span.get("chars") or 0) < 30]
-    print(f"\n--- 过短块（<30 字符）：{len(tiny)} 个 —— 这类基本是封面字段/页码/目录行 ---")
+    print(f"\n--- 过短块（<30字符）：{len(tiny)} 个 —— 这类基本是封面字段/页码/目录行 ---")
     for span in tiny[:25]:
         print(f"    {span.get('label')} [{span.get('kind')}] {span.get('preview')}")
 
@@ -42,14 +42,14 @@ def main() -> int:
     for span in toc[:6]:
         print(f"    {span.get('label')} {span.get('preview')[:60]}")
 
-    print("\n--- 前 30 个块的段落归属（看结构是否还清楚）---")
+    print("\n--- 前30个块的段落归属（看结构是否还清楚）---")
     for span in spans[:30]:
         print(
             f"    {span.get('label'):5} [{span.get('kind'):9}] "
             f"章节={str(span.get('section'))[:24]:26} {(span.get('preview') or '')[:44]}"
         )
 
-    print("\n--- Audit 报的 {n} 条问题 ---".format(n=len(findings)))
+    print("\n--- Audit报的 {n} 条问题 ---".format(n=len(findings)))
     print("  严重程度:", dict(Counter(issue.get("severity") for issue in findings)))
     print("  分类:", dict(Counter(issue.get("category") for issue in findings)))
 
@@ -70,8 +70,8 @@ def main() -> int:
         if re.search(r"封面|目录|承诺|致谢|题目|学院|学号|姓名|指导教师|完成日期", section):
             front_matter.append(issue)
 
-    print(f"\n  能在对应块里找到 evidence 的：{checkable}/{len(findings)}")
-    print(f"  evidence 与块内容对不上的：{len(evidence_missing)} 条（这些是幻觉/错位的重点嫌疑）")
+    print(f"\n能在对应块里找到evidence的：{checkable}/{len(findings)}")
+    print(f"  evidence与块内容对不上的：{len(evidence_missing)} 条（这些是幻觉/错位的重点嫌疑）")
     print(f"  目标落在封面/目录/承诺页等非正文部分：{len(front_matter)} 条")
 
     print("\n--- 全部问题（按严重程度）---")

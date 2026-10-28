@@ -3,16 +3,16 @@
 
 回答一个具体问题：**用户在对话里说的点，存在哪里？**
 
-统一存在 State 的 ``user_rules`` 里（同时落盘到
-``data/runs/<run_id>/state.json`` 与 session.json，并随 Checkpoint 一起持久化）。
+统一存在State的``user_rules``里（同时落盘到
+``data/runs/<run_id>/state.json``与session.json，并随Checkpoint一起持久化）。
 每条是一条结构化记录：
 
     {
       "id": "R1",                  # 稳定编号，用户可以按编号修改/撤销
       "kind": "rule",              # rule = 用户定的规矩；ignore = 用户明确不改的问题
       "text": "全文统一把「土豆」写成「马铃薯」",
-      "issue_ids": [1, 3],         # kind=ignore 时：被忽略的问题编号
-      "signature": {...},          # kind=ignore 时的指纹（跨轮次识别同一问题）
+      "issue_ids": [1, 3],         # kind=ignore时：被忽略的问题编号
+      "signature": {...},          # kind=ignore时的指纹（跨轮次识别同一问题）
       "created_turn": 1,
       "updated_turn": 1,
       "status": "active",          # active / revoked
@@ -21,10 +21,10 @@
       "updated_at": "..."
     }
 
-为什么要编号：用户随时可能改主意（“把 R1 改成……”“取消 R1”），
+为什么要编号：用户随时可能改主意（“把R1改成……”“取消R1”），
 没有编号就没法精确修改一个点，只能重新说一遍。
 
-为什么 ignore 要存指纹：下一轮重新审查时问题编号会变，
+为什么ignore要存指纹：下一轮重新审查时问题编号会变，
 只有指纹（位置 + 问题摘要）才能认出“这个问题用户上次说过不用管”。
 """
 
@@ -259,7 +259,7 @@ def is_ignored(issue: dict[str, Any], rules: Iterable[dict[str, Any]] | None) ->
 def describe(
     rules: Iterable[dict[str, Any]] | None, *, kinds: tuple[str, ...] | None = None
 ) -> str:
-    """给 Prompt 用的文本（带编号，方便用户按编号改）。"""
+    """给Prompt用的文本（带编号，方便用户按编号改）。"""
 
     items = [rule for rule in active_rules(rules) if kinds is None or rule.get("kind") in kinds]
     if not items:
@@ -376,8 +376,8 @@ def parse_instruction(instruction: str) -> tuple[str, dict[str, Any]]:
     支持这些写法（其余内容仍作为本轮的修改要求）：
 
         记住：全文统一把「土豆」写成「马铃薯」     -> 新增要求
-        R1 改成 全文统一用「马铃薯」              -> 修改要求
-        取消 R1                                   -> 撤销要求
+        R1改成 全文统一用「马铃薯」              -> 修改要求
+        取消R1                                   -> 撤销要求
     """
 
     text = str(instruction or "")

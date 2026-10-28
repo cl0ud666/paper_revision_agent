@@ -175,7 +175,7 @@ def explicit_targets(state, spans):
                     "source": "explicit_experiment",
                     "problem": clause.strip(),
                     "suggestion": clause.strip()
-                    + "。生成实验结构和待填结果，未知数据用 XXX 并明确标注待开展/待填，保留真实数据。",
+                    + "。生成实验结构和待填结果，未知数据用XXX并明确标注待开展/待填，保留真实数据。",
                     "span_label": anchor.label if anchor else "",
                     "evidence": anchor.text if anchor else "",
                     "other_labels": [

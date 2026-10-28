@@ -1,11 +1,11 @@
 """
-Agent Harness：把 Workflow 包装成“可运行的一次任务”。
+Agent Harness：把Workflow包装成“可运行的一次任务”。
 
 负责：
 
-- 生成 run_id / thread_id；
-- 用 Checkpointer 管理暂停（Human-in-the-loop）与恢复（Resume）；
-- 统一整理运行结果（报告路径、修改后论文路径、Trace 汇总）；
+- 生成run_id / thread_id；
+- 用Checkpointer管理暂停（Human-in-the-loop）与恢复（Resume）；
+- 统一整理运行结果（报告路径、修改后论文路径、Trace汇总）；
 - 支持自动审批模式（评测与命令行无人值守时使用）。
 """
 
@@ -27,7 +27,7 @@ from app.workflow.interaction import auto_response, prepare_response
 
 
 def new_run_id(prefix: str = "run") -> str:
-    """生成 run_id：时间戳 + 短随机串（方便按时间排序）。"""
+    """生成run_id：时间戳 + 短随机串（方便按时间排序）。"""
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     return f"{prefix}-{stamp}-{uuid.uuid4().hex[:6]}"
@@ -50,7 +50,7 @@ class RunResult:
 
     @property
     def pending_request(self) -> dict[str, Any]:
-        """当前等待用户处理的请求（一般是 human_approval）。"""
+        """当前等待用户处理的请求（一般是human_approval）。"""
 
         return self.interrupts[0] if self.interrupts else {}
 
@@ -76,12 +76,12 @@ class RunResult:
 
     @property
     def docx_path(self) -> str:
-        """带 Word 修订痕迹与批注的副本（上传 .docx 时才有）。"""
+        """带Word修订痕迹与批注的副本（上传 .docx时才有）。"""
 
         return self.state.get("docx_path", "") or ""
 
     def summary(self) -> dict[str, Any]:
-        """给 UI / CLI 用的精简摘要。"""
+        """给UI / CLI用的精简摘要。"""
 
         state = self.state
         return {
@@ -147,8 +147,8 @@ class Harness:
         """
         开始一次新任务。
 
-        :param source_docx: 原始 .docx 的路径。给了它，改完就能把改动
-            以 Word 修订痕迹写回一份副本（另存，不动原文件）。
+        :param source_docx: 原始 .docx的路径。给了它，改完就能把改动
+            以Word修订痕迹写回一份副本（另存，不动原文件）。
         """
 
         self.run_id = validate_run_id(run_id if run_id is not None else new_run_id())
@@ -157,14 +157,14 @@ class Harness:
             (run_dir / name).exists()
             for name in ("state.json", "original_document.md", "trace.jsonl", "llm_calls.jsonl")
         ):
-            raise ValueError("run_id 已有运行产物，请使用新 ID 或恢复原任务")
+            raise ValueError("run_id已有运行产物，请使用新ID或恢复原任务")
         run_dir.mkdir(parents=True, exist_ok=True)
         try:
             with (run_dir / ".started").open("x", encoding="utf-8") as handle:
                 handle.write(self.thread_id)
         except FileExistsError:
-            raise ValueError("run_id 已启动，请使用新 ID 或恢复原任务") from None
-        # 只清掉这个 run_id 的旧统计；不要动其它正在运行的任务
+            raise ValueError("run_id已启动，请使用新ID或恢复原任务") from None
+        # 只清掉这个run_id的旧统计；不要动其它正在运行的任务
         reset_recorders(self.run_id)
 
         state = initial_state(
@@ -174,7 +174,7 @@ class Harness:
             max_iterations=max_iterations or self.settings.workflow.max_iterations,
         )
         state["source_docx"] = source_docx or ""
-        # 第一轮也记进 turns，这样多轮上下文从第一轮就是完整的
+        # 第一轮也记进turns，这样多轮上下文从第一轮就是完整的
         state["turns"] = [
             {
                 "turn": 1,
@@ -194,7 +194,7 @@ class Harness:
         return self._invoke(state)
 
     def resume(self, payload: dict[str, Any] | None = None) -> RunResult:
-        """用用户的输入恢复被中断的 Workflow。"""
+        """用用户的输入恢复被中断的Workflow。"""
 
         request = self.current_pending_request()
         if not request:
@@ -202,7 +202,7 @@ class Harness:
         return self._invoke(Command(resume=prepare_response(request, payload or {})))
 
     def current_pending_request(self) -> dict[str, Any]:
-        """从 Checkpoint 读取真实 interrupt，供重启恢复和 API 使用。"""
+        """从Checkpoint读取真实interrupt，供重启恢复和API使用。"""
         snapshot = self.graph.get_state(self._config())
         pending = list(getattr(snapshot, "interrupts", ()) or ())
         if not pending:
@@ -227,15 +227,15 @@ class Harness:
 
         实现要点：
 
-        - 复用同一个 thread_id，因此 Checkpointer 里的历史（已接受的改动、
+        - 复用同一个thread_id，因此Checkpointer里的历史（已接受的改动、
           被拒绝的改动、审计结果）都还在，模型不会“忘了上下文”；
-        - 只重置**本轮**的临时字段（迭代次数、计划、上一轮 Review 结果）；
-        - 被拒绝的改动会作为 ``rejected_memory`` 继续带着，避免重复打扰用户。
+        - 只重置**本轮**的临时字段（迭代次数、计划、上一轮Review结果）；
+        - 被拒绝的改动会作为``rejected_memory``继续带着，避免重复打扰用户。
         """
 
         state = self.current_state()
         if not state:
-            raise RuntimeError("还没有可继续的任务，请先 start()")
+            raise RuntimeError("还没有可继续的任务，请先start()")
 
         previous_turn = int(state.get("turn", 1))
         new_turn = previous_turn + 1
@@ -301,7 +301,7 @@ class Harness:
         return self._invoke(update)
 
     def current_state(self) -> dict[str, Any]:
-        """从 Checkpointer 读取当前任务状态（多轮 / 恢复时用）。"""
+        """从Checkpointer读取当前任务状态（多轮 / 恢复时用）。"""
 
         try:
             snapshot = self.graph.get_state(self._config())
@@ -340,7 +340,7 @@ class Harness:
         """
         一路跑到结束（遇到人工节点时自动批准）。
 
-        用于命令行 --auto-approve 与批量评测。
+        用于命令行 --auto-approve与批量评测。
         """
 
         result = self.start(
@@ -380,7 +380,7 @@ class Harness:
         interrupts = _extract_interrupts(raw)
 
         if interrupts:
-            self.log("[Harness] Workflow 暂停，等待人工确认。")
+            self.log("[Harness] Workflow暂停，等待人工确认。")
             return RunResult(
                 run_id=run_id,
                 thread_id=self.thread_id,
@@ -390,7 +390,7 @@ class Harness:
             )
 
         review_status = (state.get("review_result") or {}).get("status", "未执行")
-        self.log(f"[Harness] Workflow 结束（Review={review_status}）。")
+        self.log(f"[Harness] Workflow结束（Review={review_status}）。")
         return RunResult(
             run_id=run_id,
             thread_id=self.thread_id,
@@ -404,13 +404,13 @@ class Harness:
         return auto_response(request, self.auto_approve_constraints)
 
     def trace_summary(self) -> dict[str, Any]:
-        """当前 run 的 Trace 汇总。"""
+        """当前run的Trace汇总。"""
 
         return get_recorder(self.run_id or "adhoc").summary()
 
 
 def _extract_interrupts(raw: Any) -> list[dict[str, Any]]:
-    """把 LangGraph 的 __interrupt__ 结果规范成 dict 列表。"""
+    """把LangGraph的 __interrupt__ 结果规范成dict列表。"""
 
     if not isinstance(raw, dict):
         return []

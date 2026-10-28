@@ -1,4 +1,4 @@
-"""独立 outbox 投递进程：Redis 断线期间仍持续扫描 PostgreSQL。"""
+"""独立outbox投递进程：Redis断线期间仍持续扫描PostgreSQL。"""
 
 import logging
 import time
@@ -36,7 +36,7 @@ def dispatch_once(publish=None):
             try:
                 publish(job.id)
             except Exception:
-                # 失败保留原状态，独立进程稍后补发；不把 Broker 错误当业务失败。
+                # 失败保留原状态，独立进程稍后补发；不把Broker错误当业务失败。
                 job.publish_after = stamp + timedelta(seconds=10)
                 continue
             if job.status != "running":

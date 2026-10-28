@@ -1,8 +1,8 @@
 """
-长文本处理：Token 估算、章节切分、分块、截断、大纲提取。
+长文本处理：Token估算、章节切分、分块、截断、大纲提取。
 
-这些能力是 Context 治理的基础：只有先把长论文“看清楚”，
-才能决定给每个 Agent 看哪一部分。
+这些能力是Context治理的基础：只有先把长论文“看清楚”，
+才能决定给每个Agent看哪一部分。
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ def normalize_document_text(text: str) -> str:
     """
     归一化整篇文档的换行与空白。
 
-    这是"读文件"与"写回 Word"共用的一份规则：
+    这是"读文件"与"写回Word"共用的一份规则：
     两边必须逐字节一致，段落偏移才能对上原文件里的文字。
     """
 
@@ -36,19 +36,19 @@ def _rstrip_pairs(line: list[tuple[str, int]]) -> list[tuple[str, int]]:
 def normalize_with_map(text: str) -> tuple[str, list[int]]:
     """
     做与 :func:`normalize_document_text` **完全相同**的归一化，
-    并返回 ``kept``：新文本第 i 个字符来自原文的哪个下标。
+    并返回``kept``：新文本第i个字符来自原文的哪个下标。
 
     为什么要这个：归一化会**删掉字符**（行尾空白、连续空行、首尾空白）。
     一旦删了，块/片段在"归一化前"算出来的偏移就整体左移，后面全错位。
-    有了 ``kept``，就能用二分把旧偏移搬到新坐标系：
+    有了``kept``，就能用二分把旧偏移搬到新坐标系：
 
         new_offset = bisect_left(kept, old_offset)
 
-    结果**不含** ``normalize_document_text`` 补的那个结尾换行，即：
+    结果**不含** ``normalize_document_text``补的那个结尾换行，即：
 
         normalize_document_text(t) == normalize_with_map(t)[0] + "\\n"
 
-    ``kept`` 单调不减，因此可以直接二分。
+    ``kept``单调不减，因此可以直接二分。
     """
 
     # 1) 统一换行：\r\n / \r -> \n（换行的来源记在被消费的第一个字符上）
@@ -64,7 +64,7 @@ def normalize_with_map(text: str) -> tuple[str, list[int]]:
         pairs.append((char, index))
         index += 1
 
-    # 2) 逐行 rstrip
+    # 2) 逐行rstrip
     out: list[tuple[str, int]] = []
     line: list[tuple[str, int]] = []
     for pair in pairs:
@@ -90,7 +90,7 @@ def normalize_with_map(text: str) -> tuple[str, list[int]]:
         out.append(pair)
     pairs = out
 
-    # 4) 整串 strip
+    # 4) 整串strip
     start, end = 0, len(pairs)
     while start < end and pairs[start][0].isspace():
         start += 1
@@ -101,7 +101,7 @@ def normalize_with_map(text: str) -> tuple[str, list[int]]:
     return "".join(char for char, _ in pairs), [origin for _, origin in pairs]
 
 
-# 中日韩文字（粗略范围，足够做 Token 估算）
+# 中日韩文字（粗略范围，足够做Token估算）
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff]")
 _WHITESPACE_RE = re.compile(r"\s+")
 _PARAGRAPH_RE = re.compile(r"\n\s*\n")
@@ -120,7 +120,7 @@ _CODE_ASSIGNMENT_RE = re.compile(
 
 # 单行代码：整段就是**一个标识符/常量/路径**，不含空格和中文。
 # 论文里的代码常常一行占一段（前后空行隔开），这时"多行"那条判据抓不到，
-# 于是 FEWSHOT_QUERY_DIR 这种常量名会被当成正文去改。
+# 于是FEWSHOT_QUERY_DIR这种常量名会被当成正文去改。
 _CODE_TOKEN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
 _CODE_PATH_RE = re.compile(r"^[A-Za-z0-9_./\\-]+$")
 
@@ -131,16 +131,16 @@ def looks_like_code(text: str) -> bool:
 
     为什么要这个：论文里的代码是"印刷出来的清单"，工具读到的是抽取文本，
     上下文往往不全（比如模块级常量根本没写进论文），**没有能力判断代码对不对**。
-    让它去"顺手修 bug"，只会拿猜测去改正确的代码。所以代码段一律不审、不改。
+    让它去"顺手修bug"，只会拿猜测去改正确的代码。所以代码段一律不审、不改。
 
     三类判据，命中任一即算代码：
 
-    1. **多行 + 程序语句**：至少一行以 Python/类 C 关键字开头，或出现 `self.`。
+    1. **多行 + 程序语句**：至少一行以Python/类C关键字开头，或出现`self.`。
     2. **单行标识符/常量/路径**：整段没有空格、没有中文，形如
        `FEWSHOT_QUERY_DIR`、`MOCO_QUEUE_SIZE`、`data/query/`。
-    3. **单行赋值或定义**：Word 中一行代码就可能单独成段。
+    3. **单行赋值或定义**：Word中一行代码就可能单独成段。
 
-    代码里的标识符还会在补丁校验和 Word 写回时受到独立保护。
+    代码里的标识符还会在补丁校验和Word写回时受到独立保护。
     """
 
     stripped_text = text.strip()
@@ -171,7 +171,7 @@ def looks_like_code(text: str) -> bool:
             return True
         if _CODE_ASSIGNMENT_RE.match(stripped):
             assignment_count += 1
-    # Word 里的一段程序清单也可能只有连续赋值/函数调用，没有 def/for。
+    # Word里的一段程序清单也可能只有连续赋值/函数调用，没有def/for。
     return assignment_count >= 2
 
 
@@ -240,9 +240,9 @@ _KNOWN_HEADINGS = {
 
 def estimate_tokens(text: str | None) -> int:
     """
-    粗略估算 Token 数。
+    粗略估算Token数。
 
-    中文按 1 字 ≈ 1 token，其他字符按 4 字符 ≈ 1 token。
+    中文按1字 ≈ 1 token，其他字符按4字符 ≈ 1 token。
     只用于预算控制，不追求精确。
     """
 
@@ -310,7 +310,7 @@ def split_sections(text: str) -> list[Section]:
     """
     按章节切分论文。
 
-    识别 Markdown 标题、``1.2`` / ``一、`` / ``第3章`` / ``Chapter 3``
+    识别Markdown标题、``1.2`` / ``一、`` / ``第3章`` / ``Chapter 3``
     以及“摘要 / 引言 / 结论 / References”等常见标题。
     """
 
@@ -344,7 +344,7 @@ def split_sections(text: str) -> list[Section]:
 
 
 def locate_section(text: str, needle: str) -> str:
-    """根据一段原文定位它所在的章节标题（用于问题的 location 字段）。"""
+    """根据一段原文定位它所在的章节标题（用于问题的location字段）。"""
 
     if not needle:
         return ""
@@ -359,7 +359,7 @@ def locate_section(text: str, needle: str) -> str:
 
 
 def document_outline(text: str, *, max_sections: int = 40, preview_chars: int = 80) -> str:
-    """生成论文大纲（章节标题 + 预览 + 规模），供 Orchestrator 使用。"""
+    """生成论文大纲（章节标题 + 预览 + 规模），供Orchestrator使用。"""
 
     sections = split_sections(text)
     if not sections:
@@ -381,7 +381,7 @@ def document_stats(text: str) -> str:
     sections = split_sections(text)
     paragraphs = [part for part in _PARAGRAPH_RE.split(text) if part.strip()]
     return (
-        f"字符数 {len(text)}；估算 tokens {estimate_tokens(text)}；"
+        f"字符数 {len(text)}；估算tokens {estimate_tokens(text)}；"
         f"识别章节 {len(sections)} 个；段落 {len(paragraphs)} 个"
     )
 
@@ -394,7 +394,7 @@ def split_chunks(
     max_chunks: int | None = None,
 ) -> list[str]:
     """
-    把长论文切成不超过 max_tokens 的块。
+    把长论文切成不超过max_tokens的块。
 
     先按段落聚合，尽量不切断段落；只有单段过长时才按句子硬切。
     """

@@ -1,22 +1,22 @@
 """
-Context 治理（State → Context）。
+Context治理（State → Context）。
 
 核心思想：
 
     完整任务状态（State）
             ↓  Context Manager（本模块）
-    当前 Agent 真正需要看到的信息
+    当前Agent真正需要看到的信息
             ↓
           LLM
 
 State ≠ Context：
 
-- State 是任务的全部状态，可以很大；
-- Context 是给一次 LLM 调用的输入，必须有预算。
+- State是任务的全部状态，可以很大；
+- Context是给一次LLM调用的输入，必须有预算。
 
-本模块为每个 Agent 定义**字段白名单**（只给它需要的），
+本模块为每个Agent定义**字段白名单**（只给它需要的），
 并对超预算的内容做“头尾保留 + 中间省略”的截断，
-避免长论文把 Context Window 撑爆。
+避免长论文把Context Window撑爆。
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from app.utils.json_utils import compact_json
 from app.utils.rules import describe as describe_rules
 from app.utils.text import document_stats, estimate_tokens, truncate_middle
 
-# 每个 Agent 允许看到的字段（顺序即展示顺序）
+# 每个Agent允许看到的字段（顺序即展示顺序）
 AGENT_CONTEXT_FIELDS: dict[str, tuple[str, ...]] = {
     "orchestrator": (
         "user_request",
@@ -86,29 +86,29 @@ AGENT_CONTEXT_FIELDS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-# 字段中文名（拼进 Prompt 时更清楚）
+# 字段中文名（拼进Prompt时更清楚）
 FIELD_LABELS: dict[str, str] = {
     "round_patches": "本轮其它批次已提出的改动",
-    "word_structure": "原始 Word 结构与直接格式（空属性表示继承样式，不代表默认值）",
+    "word_structure": "原始Word结构与直接格式（空属性表示继承样式，不代表默认值）",
     "user_request": "用户任务",
     "user_rules": "用户要求（跨轮次有效）",
     "ignored_issues": "用户明确不改的问题",
     "conversation": "之前的对话",
     "turn_info": "会话轮次",
     "document_stats": "论文规模",
-    "document_outline": "论文结构（含段落 ID）",
+    "document_outline": "论文结构（含段落ID）",
     "iteration": "本轮修改循环",
-    "review_result": "上一轮 Review 结果",
+    "review_result": "上一轮Review结果",
     "open_issues": "未通过的问题",
     "patch_stats": "补丁情况",
     "last_plan": "上一轮执行计划",
     "budget_info": "预算使用",
     "focus_areas": "重点关注方向",
-    "instructions": "上游 Agent 的指令",
+    "instructions": "上游Agent的指令",
     "chunk_position": "当前片段位置",
     "consistency_check": "一致性核对提示（确定性检查）",
     "name_list": "专有名词清单（待核验写法）",
-    "chunk_text": "待处理文本（带段落 ID）",
+    "chunk_text": "待处理文本（带段落ID）",
     "candidate_issues": "各分块报出的候选问题（待全局对齐）",
     "approved_issues": "需要解决的问题",
     "human_constraints": "用户约束（旧格式）",
@@ -165,7 +165,7 @@ def _b_document_stats(state: Any, extra: dict[str, Any]) -> str:
 
 
 def _b_document_outline(state: Any, extra: dict[str, Any]) -> str:
-    """优先用 span 索引（带段落 ID），没有就退回按标题解析。"""
+    """优先用span索引（带段落ID），没有就退回按标题解析。"""
 
     from app.document.spans import Span
 
@@ -220,8 +220,8 @@ def _b_open_issues(state: Any, extra: dict[str, Any]) -> str:
     approved = set(state.get("approved_issue_ids") or [])
     pending = [issue for issue in issues if issue.get("id") not in approved]
     if state.get("issue_gate"):
-        return f"Audit 共发现 {len(issues)} 个问题，其中 {len(pending)} 个尚未被批准修改。"
-    return f"Audit 共发现 {len(issues)} 个问题。"
+        return f"Audit共发现 {len(issues)} 个问题，其中 {len(pending)} 个尚未被批准修改。"
+    return f"Audit共发现 {len(issues)} 个问题。"
 
 
 def _b_patch_stats(state: Any, extra: dict[str, Any]) -> str:
@@ -253,7 +253,7 @@ def _b_budget_info(state: Any, extra: dict[str, Any]) -> str:
     elapsed = snapshot.get("elapsed_seconds", 0)
     max_seconds = snapshot.get("max_run_seconds", 0)
     text = (
-        f"已用 tokens {used}"
+        f"已用tokens {used}"
         + (f" / {max_run}（剩余约 {remaining}）" if max_run else "（未设上限）")
         + f"；已用时间 {elapsed}s"
         + (f" / {max_seconds:.0f}s" if max_seconds else "")
@@ -310,8 +310,8 @@ def _b_consistency_check(state: Any, extra: dict[str, Any]) -> str:
     三类：
 
     1. 同一个专有名词在全文有几种写法（PubMed / Pubmed）；
-    2. 只在摘要或结论出现、正文从未出现的方法名/数据集名（"实验没写 BERT、结论写了"）；
-    3. 疑似拼错的专有名词（阿里云 ESC / ECS）。
+    2. 只在摘要或结论出现、正文从未出现的方法名/数据集名（"实验没写BERT、结论写了"）；
+    3. 疑似拼错的专有名词（阿里云ESC / ECS）。
     """
 
     hint = str(extra.get("consistency_check") or "").strip()
@@ -333,7 +333,7 @@ def _b_candidate_issues(state: Any, extra: dict[str, Any]) -> str:
     """
     跨批对齐用的候选问题清单。
 
-    Audit 的分块是并行跑的，各分块互相看不到对方的发现，同一个毛病因此
+    Audit的分块是并行跑的，各分块互相看不到对方的发现，同一个毛病因此
     容易被报好几遍。这里把**全部分块的发现**按分块顺序摆到一起，
     让模型做一次全局收敛（合并重复、指出互相矛盾的条目）。
 
@@ -356,7 +356,7 @@ def _b_candidate_issues(state: Any, extra: dict[str, Any]) -> str:
             lines.append(f"    证据：{evidence}")
 
     # 不在这里截断：候选清单要完整送进去，否则"全局对齐"会漏掉被砍掉的那些。
-    # 长度由这一次调用的 Context 预算控制（PRA_AUDIT_CROSS_CHECK_TOKENS，0 = 不限）。
+    # 长度由这一次调用的Context预算控制（PRA_AUDIT_CROSS_CHECK_TOKENS，0 = 不限）。
     text = "\n".join(lines)
     header = (
         "（这些是**全部分块**各自报出的候选问题。分块之间互相看不到，"
@@ -378,7 +378,7 @@ def _b_approved_issues(state: Any, extra: dict[str, Any]) -> str:
     for issue in issues:
         item = {
             "id": issue.get("id"),
-            # 必须带上：Revision 要据此判断"这条是不是只有作者能拍板的矛盾"
+            # 必须带上：Revision要据此判断"这条是不是只有作者能拍板的矛盾"
             "kind": issue.get("kind") or "fix",
             "category": issue.get("category"),
             "severity": issue.get("severity"),
@@ -399,7 +399,7 @@ def _b_approved_issues(state: Any, extra: dict[str, Any]) -> str:
 
 
 def _b_human_constraints(state: Any, extra: dict[str, Any]) -> str:
-    """旧格式的约束（兼容没有 user_rules 的历史状态）。"""
+    """旧格式的约束（兼容没有user_rules的历史状态）。"""
 
     constraints = state.get("human_constraints") or []
     feedback = state.get("human_feedback") or ""
@@ -413,7 +413,7 @@ def _b_user_rules(state: Any, extra: dict[str, Any]) -> str:
     """
     用户说过的“点”都在这：带编号、可撤改、跨轮次有效。
 
-    这是多轮会话里唯一需要长期记住的东西（不需要额外的 Memory 系统）。
+    这是多轮会话里唯一需要长期记住的东西（不需要额外的Memory系统）。
     """
 
     rules = state.get("user_rules") or []
@@ -423,7 +423,7 @@ def _b_user_rules(state: Any, extra: dict[str, Any]) -> str:
         text = legacy
     if not text:
         return ""
-    header = "（这些要求在所有轮次都有效；如要修改请指明编号，例如“R1 改成……”）"
+    header = "（这些要求在所有轮次都有效；如要修改请指明编号，例如“R1改成……”）"
     return f"{header}\n{text}"
 
 
@@ -468,7 +468,7 @@ def _b_round_patches(state: Any, extra: dict[str, Any]) -> str:
     本轮**其它批次**已经提出的改动。
 
     分批修改时后面的批次看不到前面改了什么，容易出现
-    "批 2 改成马铃薯、批 5 还写土豆"这类跨批次不一致。
+    "批2改成马铃薯、批5还写土豆"这类跨批次不一致。
     把已提出的改动摘成清单放进上下文，后面的批次就能主动对齐。
     """
 
@@ -498,13 +498,13 @@ def _b_patch_decisions(state: Any, extra: dict[str, Any]) -> str:
     status_hint = {
         "applied": "已应用",
         "accepted": "已接受（待应用）",
-        "rejected": "已被用户拒绝（不算未完成，不要因此判 fail）",
+        "rejected": "已被用户拒绝（不算未完成，不要因此判fail）",
         "proposed": "待用户决定",
         "conflict": "未能落实（未改动原文，具体原因见补丁条目）",
     }
     lines: list[str] = []
-    # 长文 + 多批次时补丁可能有几十条：这里不做"只看前 20 条"的截断，
-    # 否则 Review 看不到全部改动，跨批次矛盾就无从判断（靠 token 预算整体裁剪）。
+    # 长文 + 多批次时补丁可能有几十条：这里不做"只看前20条"的截断，
+    # 否则Review看不到全部改动，跨批次矛盾就无从判断（靠token预算整体裁剪）。
     max_items = int(extra.get("max_patches", 200))
     for patch in list(patches)[:max_items]:
         raw_status = str(patch.get("status") or "")
@@ -537,7 +537,7 @@ def _b_applied_edits(state: Any, extra: dict[str, Any]) -> str:
             "revised": edit.get("replace") or edit.get("revised"),
             "action": edit.get("action", "replace_text"),
             "params": edit.get("params") or {},
-            "execution": "待最终确认后写回 Word"
+            "execution": "待最终确认后写回Word"
             if edit.get("action", "replace_text") != "replace_text"
             else "已应用到文本预览",
             "rationale": edit.get("rationale"),
@@ -641,19 +641,19 @@ def build_context(
     budget_tokens: int | None = None,
 ) -> dict[str, str]:
     """
-    为某个 Agent 构建 Context。
+    为某个Agent构建Context。
 
     Returns:
-        字段名 -> 文本块 的有序字典（只包含该 Agent 允许看到的字段）。
+        字段名 -> 文本块 的有序字典（只包含该Agent允许看到的字段）。
     """
 
     settings = get_settings()
     extra = extra or {}
-    # 用 is None 判断：budget_tokens=0 表示"不限"，不能被 `or` 当成"没传"
+    # 用is None判断：budget_tokens=0表示"不限"，不能被`or`当成"没传"
     budget = settings.context.budget_for(agent) if budget_tokens is None else budget_tokens
 
     fields: dict[str, str] = {}
-    for name in AGENT_CONTEXT_FIELDS.get(agent, ()):  # per-agent 白名单
+    for name in AGENT_CONTEXT_FIELDS.get(agent, ()):  # per-agent白名单
         if name == "word_structure":
             fields[name] = json.dumps(extra.get(name) or [], ensure_ascii=False)
             continue
@@ -697,9 +697,9 @@ def fit_budget(
     head_ratio: float = 0.6,
 ) -> dict[str, str]:
     """
-    把 Context 压到预算以内。
+    把Context压到预算以内。
 
-    策略：按 TRIM_ORDER 依次缩减最大的文本块，最后再整段兜底截断。
+    策略：按TRIM_ORDER依次缩减最大的文本块，最后再整段兜底截断。
     """
 
     if budget_tokens <= 0:
@@ -727,7 +727,7 @@ def fit_budget(
 
 
 def format_context(fields: dict[str, str]) -> str:
-    """把 Context 字段拼成给 LLM 的文本。"""
+    """把Context字段拼成给LLM的文本。"""
 
     blocks: list[str] = []
     for name, value in fields.items():

@@ -1,14 +1,14 @@
 """
-Audit 并发审查 + 跨批对齐 + 全文矛盾核查测试。
+Audit并发审查 + 跨批对齐 + 全文矛盾核查测试。
 
 覆盖：
 
 1. 分块确实**并发**执行（同时有几个调用在飞）；
-2. ``PRA_AUDIT_CONCURRENCY=1`` 时退回串行；
+2. ``PRA_AUDIT_CONCURRENCY=1``时退回串行；
 3. 结果按**分块序号**归并：完成顺序被打乱也不影响结论；
 4. 跨批对齐：模型指出的重复候选按编号被合并（且只在编号合法时生效）；
 5. 跨批对齐：只有全局视角才发现的问题被补充进来；
-6. 全文矛盾核查：整篇送审，结果并入 findings；
+6. 全文矛盾核查：整篇送审，结果并入findings；
 7. 新增环节失败时优雅降级，不影响原有分块结论。
 """
 
@@ -46,7 +46,7 @@ from tests.fakes import (
     whole_paper_response,
 )
 
-# 六个正文段落：用 PRA_AUDIT_CHUNK_TOKENS=200 会切成多块
+# 六个正文段落：用PRA_AUDIT_CHUNK_TOKENS=200会切成多块
 PARAGRAPHS = [
     "近年来，图神经网络在节点分类任务上被广泛使用，已经成为该领域最重要的方法之一，吸引了大量研究者的关注。",
     "但是实际场景中的图数据往往存在标签稀疏的问题，标注成本很高，这严重限制了模型在真实任务上的表现。",
@@ -65,7 +65,7 @@ DOC = (
 
 
 def _label_text() -> dict[str, str]:
-    """段落标签 -> 段落原文（用来构造逐字可核对的 evidence）。"""
+    """段落标签 -> 段落原文（用来构造逐字可核对的evidence）。"""
 
     return {span.label: span.text for span in build_spans(DOC, version=1)}
 
@@ -84,7 +84,7 @@ def _first_label(prompt: str) -> str:
 
 
 class _Tracker:
-    """记录同时在飞的 LLM 调用数（用来证明分块确实在并发）。"""
+    """记录同时在飞的LLM调用数（用来证明分块确实在并发）。"""
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
@@ -186,7 +186,7 @@ class AuditConcurrencyTestCase(unittest.TestCase):
         """
         构造一个"每个分块报一条问题"的假模型响应。
 
-        problems: 分块序号（从 1 开始）-> 问题描述。
+        problems: 分块序号（从1开始）-> 问题描述。
         delays: 分块序号 -> 该分块故意拖延的秒数（用来打乱完成顺序）。
         """
 
@@ -265,7 +265,7 @@ class TestChunkConcurrency(AuditConcurrencyTestCase):
         完成顺序被打乱时，重复问题仍应保留**最靠前**的那个分块的版本。
 
         这是"按分块序号归并"的直接证据：如果按完成顺序归并，
-        慢的第 1 块会被快的第 3 块抢先，结论就会随网络抖动变化。
+        慢的第1块会被快的第3块抢先，结论就会随网络抖动变化。
         """
 
         self.env(PRA_AUDIT_CONCURRENCY=3, PRA_AUDIT_CROSS_CHECK=0, PRA_AUDIT_WHOLE_PAPER=0)
@@ -275,7 +275,7 @@ class TestChunkConcurrency(AuditConcurrencyTestCase):
 
         def respond(prompt: str) -> str:
             index = _chunk_number(prompt)
-            # 第 1 块最慢、第 3 块最快：完成顺序与分块顺序相反
+            # 第1块最慢、第3块最快：完成顺序与分块顺序相反
             time.sleep({1: 0.15, 2: 0.05, 3: 0.0}.get(index, 0.0))
             label = _first_label(prompt)
             labels[index] = label
@@ -306,7 +306,7 @@ class TestChunkConcurrency(AuditConcurrencyTestCase):
 
 class TestCrossCheck(AuditConcurrencyTestCase):
     def test_duplicate_groups_are_merged(self) -> None:
-        """跨批对齐：模型指出 #1、#2 是同一件事，应当合并成一条。"""
+        """跨批对齐：模型指出 #1、#2是同一件事，应当合并成一条。"""
 
         self.env(PRA_AUDIT_CONCURRENCY=1, PRA_AUDIT_WHOLE_PAPER=0)
         texts = _label_text()
@@ -377,7 +377,7 @@ class TestCrossCheck(AuditConcurrencyTestCase):
         update = self.run_audit(
             {
                 AUDIT_HEADER: respond,
-                # 99 越界、[1] 单条不成组、负数与字符串都不是合法编号
+                # 99越界、[1] 单条不成组、负数与字符串都不是合法编号
                 CROSS_CHECK_HEADER: cross_check_response(
                     duplicates=[[99], [1], [-3], ["1", "2"], [0, 1]]
                 ),
@@ -647,7 +647,7 @@ class TestTwoPassesAreFused(AuditConcurrencyTestCase):
         self.assertNotIn("chunk_findings", update)
 
     def test_findings_have_no_source_field_leaking_to_user(self) -> None:
-        """来源只进 audit_meta，不进用户看到的问题条目。"""
+        """来源只进audit_meta，不进用户看到的问题条目。"""
 
         self.env(PRA_AUDIT_CONCURRENCY=1, PRA_AUDIT_CROSS_CHECK=0)
         texts = _label_text()
@@ -679,7 +679,7 @@ class TestWholePaperInput(AuditConcurrencyTestCase):
     """
     整篇兜底的输入控制。
 
-    默认给了 24000 token 上限（它没有分块兜底，一次撑爆就整段丢失），
+    默认给了24000 token上限（它没有分块兜底，一次撑爆就整段丢失），
     但短文档仍然完整送审、不会被截断。
     """
 
@@ -696,10 +696,10 @@ class TestWholePaperInput(AuditConcurrencyTestCase):
         self.assertTrue(update["audit_meta"]["whole_paper"])
         self.assertFalse(update["audit_meta"]["whole_paper_truncated"])
         self.assertEqual(len(prompts), 1)
-        # 注意：prompt 模板里也会出现"（此处省略约 N tokens）"这句解释，
+        # 注意：prompt模板里也会出现"（此处省略约N tokens）"这句解释，
         # 所以这里匹配只有真正截断才会写进去的那种形式
         self.assertNotIn("……（此处省略约", prompts[0])
-        # 整篇都在：最后一段也出现在 prompt 里
+        # 整篇都在：最后一段也出现在prompt里
         self.assertIn(PARAGRAPHS[-1], prompts[0])
 
     def test_whole_paper_limit_still_applies_when_explicitly_set(self) -> None:
@@ -726,8 +726,8 @@ class TestTargetedChecks(AuditConcurrencyTestCase):
     """
     定向对照（主力）与整篇兜底（只在短文档或零发现时跑）。
 
-    背景：跨章节矛盾本质是**对照**任务——摘要 vs 结论、摘要承诺 vs 各章产出、
-    正文数字 vs 表格。把两份材料摆在一起，比"整篇送审让模型自己找该对照什么"
+    背景：跨章节矛盾本质是**对照**任务——摘要vs结论、摘要承诺vs各章产出、
+    正文数字vs表格。把两份材料摆在一起，比"整篇送审让模型自己找该对照什么"
     便宜一个数量级，也更容易命中。
     """
 
@@ -800,8 +800,8 @@ class TestTargetedChecks(AuditConcurrencyTestCase):
         )
 
         # 对照材料里必须**同时**出现两份材料，而不是整篇
-        self.assertIn("=== 材料 A ===", prompts[0])
-        self.assertIn("=== 材料 B ===", prompts[0])
+        self.assertIn("=== 材料A ===", prompts[0])
+        self.assertIn("=== 材料B ===", prompts[0])
 
     def test_targeted_can_be_switched_off(self) -> None:
         self.env(PRA_AUDIT_CONCURRENCY=1, PRA_AUDIT_CROSS_CHECK=0, PRA_AUDIT_WHOLE_PAPER=0)
@@ -953,9 +953,9 @@ class TestAuditCheckDefaults(unittest.TestCase):
         self.assertEqual(self.settings.context.audit_whole_paper_tokens, 24000)
 
     def test_small_document_threshold(self) -> None:
-        # 20000：本项目的论文正文约 1.7 万 token，这样它每轮都能整篇送一次。
+        # 20000：本项目的论文正文约1.7万token，这样它每轮都能整篇送一次。
         # 整篇是唯一"不依赖我们枚举配对范围"的覆盖（定向对照只能看我们想到的配对），
-        # 约占总 token 的 11%，值得留。
+        # 约占总token的11%，值得留。
         self.assertEqual(self.settings.context.audit_whole_paper_small_doc, 20000)
 
 
@@ -993,6 +993,6 @@ class TestDuplicateGroupHelper(unittest.TestCase):
         issues = [{"severity": "medium", "problem": str(i)} for i in range(4)]
         merged, count = _apply_duplicate_groups(issues, [[1, 2], [2, 3]])
 
-        # #2 已经归进第一组，第二组只剩 #3 一条 -> 不成组，不合并
+        # #2已经归进第一组，第二组只剩 #3一条 -> 不成组，不合并
         self.assertEqual(count, 1)
         self.assertEqual(len(merged), 3)

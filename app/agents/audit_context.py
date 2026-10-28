@@ -116,7 +116,7 @@ _NUMBER_RE = re.compile(r"\d")
 # 对照材料的大小上限，保证"小对照"真的小
 MAX_COMPARISON_SENTENCES = 40
 MAX_SECTION_TAIL_CHARS = 120
-# 只取到二级标题（"## 3 实验"）：三级小节太碎，每个都取末段会把材料撑大
+# 只取到二级标题（"## 3实验"）：三级小节太碎，每个都取末段会把材料撑大
 MAX_CHAPTER_LEVEL = 2
 # 「强指标词」：出现就几乎可以断定这句在讲结果数值 —— 优先收
 _METRIC_STRONG = (
@@ -162,10 +162,10 @@ def _render_section_tails(spans: list[Span], *, skip_zones: set[str] | None = No
 
     两条过滤（都是踩过的坑）：
 
-    - **代码注释不是章节标题**：论文里 `# 将序列切分为两半` 这种 Python 注释
-      会被 spans 当成 Markdown 一级标题，于是每一条注释都变成一个"章"、
+    - **代码注释不是章节标题**：论文里`# 将序列切分为两半`这种Python注释
+      会被spans当成Markdown一级标题，于是每一条注释都变成一个"章"、
       还各自配一个"末段"。这里只认"以编号或白名单词开头"的真标题。
-    - **表格不当末段**：章节末尾若是表格，整张 Markdown 表会被压成一行塞进材料。
+    - **表格不当末段**：章节末尾若是表格，整张Markdown表会被压成一行塞进材料。
     """
 
     skip = skip_zones or set()
@@ -204,8 +204,8 @@ def _render_section_tails(spans: list[Span], *, skip_zones: set[str] | None = No
     return "\n".join(lines)
 
 
-# 真章节标题：`# 4 实验设计与实现`、`## 2.2 MoCo对比学习框架`、`# 摘 要`…
-# 而 `# 将序列切分为两半`（Python 注释）不匹配 —— 它没有编号也不是白名单词。
+# 真章节标题：`# 4实验设计与实现`、`## 2.2 MoCo对比学习框架`、`# 摘 要`…
+# 而`# 将序列切分为两半`（Python注释）不匹配 —— 它没有编号也不是白名单词。
 _CHAPTER_HEAD_RE = re.compile(
     r"^#{0,6}\s*(?:"
     r"\d+(?:\.\d+)*"  # 4 / 2.2 / 2.2.1
@@ -223,7 +223,7 @@ _CHAPTER_HEAD_RE = re.compile(
 
 
 def _is_chapter_heading(text: str) -> bool:
-    """这一行（或这一段所属的 section）是不是真的章节标题。"""
+    """这一行（或这一段所属的section）是不是真的章节标题。"""
 
     return bool(_CHAPTER_HEAD_RE.match(str(text or "").strip()))
 
@@ -234,11 +234,11 @@ def _render_numbered_sentences(
     """
     正文里"含数字"的句子（不含表格）：专门用来和表格里的数值对照。
 
-    返回 ``(文本, 因上限被丢弃的句数)``。
+    返回``(文本, 因上限被丢弃的句数)``。
 
     两档优先级：先收**强指标词**（准确率/召回/F1/误报…）的句子，再收弱指标词
-    （提升/相比/优于…）的。以前是一锅端按出现顺序取前 N 句，结果是
-    "说了一句'优于'的废话"把"准确率 96.67%"这种关键句挤出配额。
+    （提升/相比/优于…）的。以前是一锅端按出现顺序取前N句，结果是
+    "说了一句'优于'的废话"把"准确率96.67%"这种关键句挤出配额。
     """
 
     strong: list[str] = []
@@ -256,7 +256,7 @@ def _render_numbered_sentences(
                 weak.append(line)
 
     ordered = strong + weak
-    # 0 = 不限。注意不能写成 ordered[:0]（那会一句都不取，
+    # 0 = 不限。注意不能写成ordered[:0]（那会一句都不取，
     # 整组「正文数字 × 表格」对照会被静默跳过）。
     if limit <= 0:
         return "\n".join(ordered), 0
@@ -270,7 +270,7 @@ def _build_comparisons(auditable: list[Span]) -> list[dict[str, Any]]:
     要做的定向对照：每一组都是"两份材料 + 只看什么"。
 
     关键点：材料都很短，而且**把要对照的两份摆在一起**。
-    跨章节矛盾本质是对照任务——两句话隔着上万 token 时，模型两边都记不住。
+    跨章节矛盾本质是对照任务——两句话隔着上万token时，模型两边都记不住。
     """
 
     comparisons: list[dict[str, Any]] = []
@@ -313,7 +313,7 @@ def _build_comparisons(auditable: list[Span]) -> list[dict[str, Any]]:
                 "focus": "同一指标、同一组实验的数值是否一致",
                 "left": numbers,
                 "right": tables,
-                # 因 40 句上限被丢掉的句数 —— 必须报出来，不能装作查了全篇
+                # 因40句上限被丢掉的句数 —— 必须报出来，不能装作查了全篇
                 "dropped": dropped_numbers,
             }
         )

@@ -11,7 +11,7 @@ def all_applied_edits(state: Any) -> list[dict[str, Any]]:
         collected.append(dict(entry))
     if collected:
         return collected
-    # 兼容旧数据（没有补丁模型时用的 revision_edits）
+    # 兼容旧数据（没有补丁模型时用的revision_edits）
     return list(state.get("revision_edits") or [])
 
 

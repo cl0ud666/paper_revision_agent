@@ -1,19 +1,19 @@
 """
 跨批次一致性检查（确定性，不依赖模型）。
 
-要解决的问题：修改是分批做的，批 2 把"土豆"改成"马铃薯"，但批 5 所在的那段
-还写着"土豆"——这种**同一概念两种写法**以前只能靠 Review 那一次全局判断，
-而长文的 Review 视野会被预算截断。
+要解决的问题：修改是分批做的，批2把"土豆"改成"马铃薯"，但批5所在的那段
+还写着"土豆"——这种**同一概念两种写法**以前只能靠Review那一次全局判断，
+而长文的Review视野会被预算截断。
 
 这里用已经落地的补丁反推出"术语替换表"，再全文扫描一遍：
 
-    「土豆」→「马铃薯」（来自 patch-012）
-    → 但 P123、P456 里还写着「土豆」
+    「土豆」→「马铃薯」（来自patch-012）
+    → 但P123、P456里还写着「土豆」
 
 两个来源：
 
-1. **用户要求**：`user_rules` 里的 "把 X 写成 Y" / "X→Y" / "统一改为 Y" 这类写法；
-2. **已应用的补丁**：before/replace 都很短（属于术语级替换）的那些。
+1. **用户要求**：`user_rules`里的 "把X写成Y" / "X→Y" / "统一改为Y" 这类写法；
+2. **已应用的补丁**：before/replace都很短（属于术语级替换）的那些。
 
 只做"短片段替换"的检查（长句改写不算术语），因此误报很低。
 """
@@ -87,7 +87,7 @@ def find_inconsistencies(
     fixed_spans: Iterable[str] = (),
 ) -> list[dict[str, Any]]:
     """
-    全文扫描：已经统一成 B 的地方，是否还有地方写着 A。
+    全文扫描：已经统一成B的地方，是否还有地方写着A。
 
     返回每个不一致项：{old, new, source, count, spans}
     """
@@ -145,7 +145,7 @@ def find_inconsistencies(
 # ---------------------------------------------------------------- 专有名词写法
 
 # 只认"含字母的拉丁词"（模型名 / 数据集名 / 人名 / 缩写都在这一类）
-# 标识符不是论文术语：不能把 FEWSHOT_QUERY_DIR 拆成 FEWSHOT/QUERY/DIR。
+# 标识符不是论文术语：不能把FEWSHOT_QUERY_DIR拆成FEWSHOT/QUERY/DIR。
 _LATIN_TOKEN_RE = re.compile(
     r"(?<![A-Za-z0-9_])[A-Za-z][A-Za-z0-9]*(?:[.\-][A-Za-z0-9]+)*(?![A-Za-z0-9_])"
 )
@@ -162,7 +162,7 @@ def _has_inner_capital(token: str) -> bool:
     词里除了首字母还有大写吗？
 
     这一条是为了不误报普通英文词的句首大写（"We" vs "we"）：
-    PubMed / Pubmed 这种大小写混排的专有名词才会命中。
+    PubMed / Pubmed这种大小写混排的专有名词才会命中。
     """
 
     return any(char.isupper() for char in token[1:])
@@ -178,8 +178,8 @@ def find_naming_variants(
 
     例：
 
-        P03 里写 PubMed，T01 里写 Pubmed      -> 大小写不统一
-        P05 里写 Graph-SAGE，P09 里写 GraphSAGE -> 连字符不统一
+        P03里写PubMed，T01里写Pubmed      -> 大小写不统一
+        P05里写Graph-SAGE，P09里写GraphSAGE -> 连字符不统一
 
     为什么需要它：模型只能"看一段"，而专有名词写法是**全文属性**；
     这个扫描把证据先摆出来，模型再据此写成一条有据可依的问题，
@@ -227,7 +227,7 @@ def describe_naming_variants(
     max_chars: int = 700,
 ) -> str:
     """
-    转成给 Prompt 看的文字（每种写法给出出现过的段落）。
+    转成给Prompt看的文字（每种写法给出出现过的段落）。
 
     做长度上限：这是"提示"而不是问题清单本身，不能占掉审查正文的预算。
     """
@@ -257,12 +257,12 @@ def find_structure_damage(spans: Iterable[Any]) -> list[dict[str, Any]]:
 
     典型症状：
 
-        ### ### 3.3.5 对比损失函数优化    <- 标记重复（模型把 ### 抄进了修改结果）
+        ### ### 3.3.5对比损失函数优化    <- 标记重复（模型把 ### 抄进了修改结果）
         ### 3.3.5 ### 对比损失函数优化    <- 标记跑到文字中间
         ###                              <- 标题只剩标记、文字没了
 
     为什么要单独拦一道：这类问题模型自己很难承认（它认为改得对），
-    但在 Word 里就是真真切切的乱码，必须在复核阶段被确定性抓住。
+    但在Word里就是真真切切的乱码，必须在复核阶段被确定性抓住。
     """
 
     items: list[dict[str, Any]] = []
@@ -287,7 +287,7 @@ def find_structure_damage(spans: Iterable[Any]) -> list[dict[str, Any]]:
                 {
                     "label": label,
                     "text": text[:60],
-                    "reason": "标题文字中间混进了 Markdown 标记",
+                    "reason": "标题文字中间混进了Markdown标记",
                 }
             )
     return items
@@ -443,7 +443,7 @@ def find_cross_section_gaps(spans: Iterable[Any]) -> list[dict[str, Any]]:
     """
     只在摘要/结论出现、正文**从未**出现的专有名词。
 
-    这就是"实验里没写 BERT，但结论里写了 BERT"那一类问题。
+    这就是"实验里没写BERT，但结论里写了BERT"那一类问题。
     为什么必须做成确定性检查：摘要和结论常常落在不同的审查批次里，
     模型一次只看一批，能不能发现完全取决于"这两句碰巧没碰巧分到一起"——
     所以同一篇论文跑三次可能只报一次。全文扫描不吃这个运气。
@@ -467,7 +467,7 @@ def find_cross_section_gaps(spans: Iterable[Any]) -> list[dict[str, Any]]:
 
 
 def _edit_distance_is_one(a: str, b: str) -> bool:
-    """只判断编辑距离是不是 1（相邻字符交换算一次编辑）。"""
+    """只判断编辑距离是不是1（相邻字符交换算一次编辑）。"""
 
     if a == b:
         return False
@@ -506,7 +506,7 @@ def find_near_miss_names(
     """
     疑似拼错的专有名词：与另一个高频写法只差一个字符。
 
-    例如"阿里云 ESC"（只出现 1 次）与"ECS"（出现 3 次）——
+    例如"阿里云ESC"（只出现1次）与"ECS"（出现3次）——
     这类错字模型很难发现（它不认识你的领域），但编辑距离能发现。
     """
 
@@ -551,7 +551,7 @@ def describe_entity_check(
     gaps: Iterable[dict[str, Any]],
     near_misses: Iterable[dict[str, Any]],
 ) -> list[str]:
-    """把上面两类结果转成 Prompt / 报告里的小标题段落。"""
+    """把上面两类结果转成Prompt / 报告里的小标题段落。"""
 
     sections: list[str] = []
     miss_items = list(near_misses)
@@ -567,7 +567,7 @@ def describe_entity_check(
         sections.append("\n".join(lines))
 
     if miss_items:
-        # 措辞中性：形近 ≠ 写错。GNN / KNN / CNN / RNN 都是真实存在的独立术语，
+        # 措辞中性：形近 ≠ 写错。GNN / KNN / CNN / RNN都是真实存在的独立术语，
         # 只差一个字符不能说明其中一个是笔误——必须回到两处的上下文去判断。
         # （这里不写"疑似笔误"、也不强调出现次数，避免把模型推向"少数服从多数"。）
         lines = [

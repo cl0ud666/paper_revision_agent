@@ -1,5 +1,5 @@
 """
-评测闭环测试：Golden Set 运行、LLM-as-Judge 解析、回归退化检测。
+评测闭环测试：Golden Set运行、LLM-as-Judge解析、回归退化检测。
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ FIXED = "本文提出了一种新的方法，该方法可以有效提高准确�
 
 
 def fake_judge(original: str, revised: str, **kwargs) -> dict:
-    """固定分数的假 Judge，避免测试依赖网络。"""
+    """固定分数的假Judge，避免测试依赖网络。"""
 
     return {
         "scores": {"语法": 5, "原意": 4, "学术规范": 4, "降重": 5},
@@ -156,7 +156,7 @@ class TestGoldenSetLoading(EvaluationTestCase):
 
 class TestEvaluateRun(EvaluationTestCase):
     def test_evaluate_writes_results(self) -> None:
-        # Review 也用假模型返回 pass
+        # Review也用假模型返回pass
 
         set_llm_factory(
             fake_factory(
@@ -230,7 +230,7 @@ class TestJudgeParsing(EvaluationTestCase):
         )
         result = judge_pair(TEXT, FIXED, focus="语法")
         self.assertEqual(result["scores"]["语法"], 5)
-        self.assertEqual(result["scores"]["原意"], 5)  # 超出范围被截断到 5
+        self.assertEqual(result["scores"]["原意"], 5)  # 超出范围被截断到5
         self.assertEqual(result["average"], 4.25)
         self.assertEqual(result["error"], "")
 

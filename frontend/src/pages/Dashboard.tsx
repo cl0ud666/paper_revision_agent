@@ -64,7 +64,7 @@ export function Dashboard({ user }: { user: User }) {
         <div className="empty">
           <FileText size={38} />
           <h3>第一份修订稿，从这里开始</h3>
-          <p>上传 Word 文件，原稿会单独保留。</p>
+          <p>上传Word文件，原稿会单独保留。</p>
           <button className="secondary" disabled={!canUpload} onClick={() => setUploadOpen(true)}>
             上传第一篇论文
             <ArrowRight size={16} />

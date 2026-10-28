@@ -8,7 +8,7 @@ LLM-as-Judge：对“修改前 / 修改后”的文本对做多维度打分。
 3. 学术规范：表述是否客观、规范
 4. 降重：是否减少冗余重复
 
-评分为 1~5 的整数（5 最好）。
+评分为1~5的整数（5最好）。
 """
 
 from __future__ import annotations
@@ -23,13 +23,13 @@ from app.utils.text import compact_text
 
 DIMENSIONS = ("语法", "原意", "学术规范", "降重")
 
-JUDGE_HEADER = "【任务】JUDGE 质量评分"
+JUDGE_HEADER = "【任务】JUDGE质量评分"
 
 JUDGE_SYSTEM = (
     "你是学术写作评测专家。"
     "你需要对“修改前 / 修改后”的文本对做客观评分，"
     "评分必须基于文本本身，不能因为修改更“华丽”就给高分。"
-    "始终只输出合法 JSON。"
+    "始终只输出合法JSON。"
 )
 
 
@@ -45,7 +45,7 @@ def render_judge_prompt(
     return f"""{JUDGE_HEADER}
 
 # 评分任务
-请比较下面的“修改前”和“修改后”，按四个维度打分（1~5 的整数，5 最好）。
+请比较下面的“修改前”和“修改后”，按四个维度打分（1~5的整数，5最好）。
 
 重点考察维度：{focus or "综合"}
 期望的修改效果：{expectation or "（未特别指定）"}
@@ -64,7 +64,7 @@ def render_judge_prompt(
 - 学术规范：是否客观、规范，是否去掉口语化与无依据的断言。
 - 降重：是否消除冗余重复（如果没有冗余，保持原样也应得高分）。
 
-# 输出格式（只输出 JSON）
+# 输出格式（只输出JSON）
 {{
   "语法": 1,
   "原意": 1,
@@ -116,7 +116,7 @@ def judge_pair(
     try:
         data = parse_json_object(response.text, required_keys=("语法",), context="Judge")
     except ModelOutputError:
-        return _failed_result("Judge 输出无法解析")
+        return _failed_result("Judge输出无法解析")
 
     scores: dict[str, int] = {}
     for dimension in DIMENSIONS:

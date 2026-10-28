@@ -1,12 +1,12 @@
 """
-端到端 Workflow 测试（使用假 LLM，不联网）。
+端到端Workflow测试（使用假LLM，不联网）。
 
 覆盖：
 
 1. 正常路径：Audit → Human → Revision → Review PASS → Report
 2. Human-in-the-loop：暂停（interrupt）后用用户输入恢复
-3. Review FAIL 后的自适应重规划与迭代上限熔断
-4. Audit 整体失败的异常隔离（降级出报告）
+3. Review FAIL后的自适应重规划与迭代上限熔断
+4. Audit整体失败的异常隔离（降级出报告）
 5. 没有发现问题时直接出报告
 """
 
@@ -55,7 +55,7 @@ INTRO_IMPROVED = "图神经网络虽然被广泛用于节点分类任务，但�
 
 
 class WorkflowTestCase(unittest.TestCase):
-    """公共环境：临时 data 目录 + 假 LLM。"""
+    """公共环境：临时data目录 + 假LLM。"""
 
     def setUp(self) -> None:
         self._original_pra_env = {
@@ -75,9 +75,9 @@ class WorkflowTestCase(unittest.TestCase):
         os.environ["PRA_RETRY_MAX_ATTEMPTS"] = "1"
         os.environ["PRA_RETRY_BASE_DELAY"] = "0"
         # 这个文件验证的是**交互式**流程，所以打开补丁闸门；
-        # decision findings 仍由工作流按问题类型进入人工拍板。
+        # decision findings仍由工作流按问题类型进入人工拍板。
         os.environ["PRA_PATCH_GATE"] = "1"
-        # 写 Word 前的那次确认对这里的断言没意义，关掉
+        # 写Word前的那次确认对这里的断言没意义，关掉
         os.environ["PRA_FINAL_CONFIRM"] = "0"
         reset_settings()
         reset_guards()
@@ -185,7 +185,7 @@ class TestHappyPath(WorkflowTestCase):
         result = harness.start("请全面检查并修改这篇论文。", DOC)
 
         # 唯一的闸门：补丁审阅（问题清单不再问"有没有要忽略的"，
-        # 写错的问题直接进 Revision，这里一次看完全部改动）
+        # 写错的问题直接进Revision，这里一次看完全部改动）
         self.assertTrue(result.is_interrupted)
         request = result.pending_request
         self.assertEqual(request["type"], "patch_review")
@@ -193,7 +193,7 @@ class TestHappyPath(WorkflowTestCase):
         self.assertEqual(request["patches"][0]["span_label"], "P01")
         self.assertTrue(request["patches"][0]["rationale"])
 
-        # 用户只勾选接受第 1 条补丁（不需要写理由）
+        # 用户只勾选接受第1条补丁（不需要写理由）
         result = harness.resume({"accepted_ids": ["patch-001"]})
 
         self.assertEqual(result.status, "completed")
@@ -252,8 +252,8 @@ class TestHappyPath(WorkflowTestCase):
         """用户说“这个不用改”之后：不再进入修改，并且记进要求清单。"""
 
         # 忽略机制**保留**（只是不再在闸门里问用户"要忽略哪些"）。
-        # 这里直接验证机制本身：给出 ignore 决定后，问题被标成 ignored，
-        # 并生成一条可跨轮识别的 ignore 规则（下一轮不会再问同一批问题）。
+        # 这里直接验证机制本身：给出ignore决定后，问题被标成ignored，
+        # 并生成一条可跨轮识别的ignore规则（下一轮不会再问同一批问题）。
         from app.workflow.nodes import normalize_issue_payload
 
         findings = [
@@ -292,9 +292,9 @@ class TestDecisionGate(WorkflowTestCase):
     """
     **只有"前后矛盾、必须作者拍板"的问题**才停下来问用户。
 
-    这里盯的是一个真实踩过的坑：`audit` 节点误把 `decisions` 标成 True，
+    这里盯的是一个真实踩过的坑：`audit`节点误把`decisions`标成True，
     导致路由以为"已经问过"，决策闸门被整个跳过——用户根本没被问，
-    Revision 就自己替用户做了决定（删限定语、改数值口径）。
+    Revision就自己替用户做了决定（删限定语、改数值口径）。
     """
 
     def _install(self, kind: str):
@@ -329,13 +329,13 @@ class TestDecisionGate(WorkflowTestCase):
         self.assertEqual(result.pending_request["type"], "issue_review")
         self.assertEqual([issue["id"] for issue in result.pending_request["issues"]], [1])
 
-        # 用户的判断会被记成规则，Revision 拿得到
+        # 用户的判断会被记成规则，Revision拿得到
         result = harness.resume({"rules": ["温度系数以 0.07 为准"]})
         self.assertTrue(result.state["decisions"])
         self.assertIn("0.07", result.state["user_rules"][0]["text"])
 
     def test_plain_fix_goes_straight_to_revision(self) -> None:
-        """写错的问题（fix）不该打扰用户，直接进 Revision。"""
+        """写错的问题（fix）不该打扰用户，直接进Revision。"""
 
         self._install("fix")
         harness = Harness(logger=lambda message: None)
@@ -343,7 +343,7 @@ class TestDecisionGate(WorkflowTestCase):
 
         self.assertTrue(result.is_interrupted)
         self.assertEqual(result.pending_request["type"], "patch_review")
-        # audit 节点绝不能替用户把"已经问过"标上
+        # audit节点绝不能替用户把"已经问过"标上
         self.assertFalse(result.state.get("decisions"))
 
 
@@ -352,11 +352,11 @@ class TestReplanningImpl(WorkflowTestCase):
         calls = {"count": 0}
 
         def orchestrator(prompt: str) -> str:
-            # 首轮规划走 Audit；Review FAIL 后的重规划直接回到 Revision
+            # 首轮规划走Audit；Review FAIL后的重规划直接回到Revision
             return plan_response("revision" if "重新规划" in prompt else "audit")
 
         def revision(prompt: str) -> str:
-            # 每轮改一个不同的地方，模拟“改了但 Review 仍不通过”
+            # 每轮改一个不同的地方，模拟“改了但Review仍不通过”
             calls["count"] += 1
             if calls["count"] == 1:
                 return patch_response(
@@ -423,7 +423,7 @@ class TestReplanningImpl(WorkflowTestCase):
         self.assertEqual(result.review_status, "fail")
         self.assertIn("迭代上限", result.final_report)
 
-        # Orchestrator 至少被调用两次（初始规划 + 重规划）
+        # Orchestrator至少被调用两次（初始规划 + 重规划）
         plan_events = [
             event
             for event in result.state["trace"]
@@ -480,7 +480,7 @@ class TestDegradedPaths(WorkflowTestCase):
         result = harness.run_to_completion("请全面检查并修改这篇论文。", DOC)
 
         self.assertEqual(result.status, "completed")
-        # 规则兜底：用户要求全面检查 -> 先 Audit
+        # 规则兜底：用户要求全面检查 -> 先Audit
         self.assertEqual(result.state["plan_kind"], "full_review")
         self.assertEqual(result.state["audit_meta"].get("chunks"), 1)
 

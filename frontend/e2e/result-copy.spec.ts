@@ -25,11 +25,11 @@ test('completed result has Word explanation, no report UI or empty unfinished bl
   await page.goto('/runs/result')
   await expect(
     page.getByRole('heading', {
-      name: '你的修订文件已就绪，所有修订及未能写进去的修订均已在修订版 Word 里面添加了批注，可点击审阅-显示标记的最终状态进行查看。',
+      name: '你的修订文件已就绪，所有修订及未能写进去的修订均已在修订版Word里面添加了批注，可点击审阅-显示标记的最终状态进行查看。',
       exact: true,
     }),
   ).toBeVisible()
-  await expect(page.getByRole('link', { name: '下载修订版 Word' })).toBeVisible()
+  await expect(page.getByRole('link', { name: '下载修订版Word' })).toBeVisible()
   await expect(page.locator('body')).not.toContainText(
     /查看修改报告|下载报告|最终确认清单中没有未完成/,
   )

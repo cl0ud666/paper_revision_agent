@@ -18,7 +18,7 @@ from app.utils.text import (
 
 
 def current_spans(state: Any) -> list[Span]:
-    """取当前文档的 span（State 里只有精简索引，这里重建完整对象）。"""
+    """取当前文档的span（State里只有精简索引，这里重建完整对象）。"""
 
     document = state.get("current_document") or ""
     version = int(state.get("document_version", 1))
@@ -31,8 +31,8 @@ def collect_targets(state: Any) -> list[dict[str, Any]]:
 
     优先级：
 
-    1. Review 上一轮给出的剩余问题（重规划时最有针对性）；
-    2. Audit 发现、且还没有被应用过的问题（首轮）；
+    1. Review上一轮给出的剩余问题（重规划时最有针对性）；
+    2. Audit发现、且还没有被应用过的问题（首轮）；
     3. 用户本轮明确提出的修改要求（Direct Revision / 多轮追问）。
     """
 
@@ -77,7 +77,7 @@ def collect_targets(state: Any) -> list[dict[str, Any]]:
             return []
 
     # 用户本轮明确说的话优先（Direct Revision / 多轮追问），
-    # Orchestrator 的通用指令只作为补充，不能盖过用户的要求。
+    # Orchestrator的通用指令只作为补充，不能盖过用户的要求。
     request = (state.get("user_request") or "").strip()
     instruction = (state.get("next_instructions") or "").strip()
     if request or instruction:
@@ -277,7 +277,7 @@ def _group_targets(
                     index = position
                     break
         buckets.setdefault(index, []).append(issue)
-        # 矛盾常常"报在 A、要改 B"（例如报在参数表 T10、要改正文 P183）。
+        # 矛盾常常"报在A、要改B"（例如报在参数表T10、要改正文P183）。
         # 把另一处的段落也塞进这一批，否则模型看不到要改的那段正文，
         # 就会"知道有问题但提不出补丁"。
         for other in _related_spans(spans, issue):

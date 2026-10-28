@@ -1,5 +1,5 @@
 """
-Streamlit 界面：把 Multi-Agent Workflow 和人机协作过程可视化。
+Streamlit界面：把Multi-Agent Workflow和人机协作过程可视化。
 
 启动：
 
@@ -7,11 +7,11 @@ Streamlit 界面：把 Multi-Agent Workflow 和人机协作过程可视化。
 
 界面流程：
 
-    上传/粘贴论文 → 开始修改 → Audit 给出问题清单 → 用户勾选问题 + 填写约束
-    → Revision 修改 → Review 复核 → 查看报告 / 对照 / 运行观测
+    上传/粘贴论文 → 开始修改 → Audit给出问题清单 → 用户勾选问题 + 填写约束
+    → Revision修改 → Review复核 → 查看报告 / 对照 / 运行观测
 
-说明：Streamlit 的脚本会反复重跑，因此 Harness（以及它内部的 Graph 与
-Checkpointer）必须保存在 st.session_state 里，才能在中途停下等人时保住状态。
+说明：Streamlit的脚本会反复重跑，因此Harness（以及它内部的Graph与
+Checkpointer）必须保存在st.session_state里，才能在中途停下等人时保住状态。
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ SEVERITY_LABEL = {"high": "高", "medium": "中", "low": "低"}
 
 def keep_source_docx(data: bytes, name: str) -> str:
     """
-    把上传的 .docx 存到磁盘，返回路径。
+    把上传的 .docx存到磁盘，返回路径。
 
     为什么要落盘：改完要把它当"原文件"写回一份带修订痕迹的副本，
     而任务开始到出结果之间会隔着好几次人工确认，内存里留不住。
@@ -57,7 +57,7 @@ def keep_source_docx(data: bytes, name: str) -> str:
 
 
 def collect_edits(state: dict) -> list[dict]:
-    """汇总所有轮次真正落实的修改（revision_edits 只有最后一轮）。"""
+    """汇总所有轮次真正落实的修改（revision_edits只有最后一轮）。"""
 
     collected: list[dict] = []
     for entry in state.get("revision_history") or []:
@@ -81,7 +81,7 @@ def collect_failed_edits(state: dict) -> list[dict]:
 
 
 def init_state() -> None:
-    """初始化 session_state。"""
+    """初始化session_state。"""
 
     st.session_state.setdefault("harness", None)
     st.session_state.setdefault("result", None)
@@ -100,7 +100,7 @@ def sidebar(settings) -> dict:
         min_value=1,
         max_value=6,
         value=settings.workflow.max_iterations,
-        help="Review 未通过时会循环修改，超过这个轮次就输出当前最优结果。",
+        help="Review未通过时会循环修改，超过这个轮次就输出当前最优结果。",
     )
     auto_approve = st.sidebar.checkbox(
         "自动批准全部问题（跳过人工确认）",
@@ -111,7 +111,7 @@ def sidebar(settings) -> dict:
         "修改约束（每行一条）",
         value="不要修改实验结果与数据\n保持作者原有表达风格",
         height=100,
-        help="这些约束会进入 Revision 与 Review 的判断依据。",
+        help="这些约束会进入Revision与Review的判断依据。",
     )
     return {
         "max_iterations": int(max_iterations),
@@ -123,7 +123,7 @@ def sidebar(settings) -> dict:
 def document_input() -> tuple[str, str]:
     """论文输入区，返回 (用户任务, 论文文本)。"""
 
-    st.subheader("1 准备论文")
+    st.subheader("1准备论文")
     request = st.text_input(
         "你的任务",
         value="请全面检查并修改这篇论文。",
@@ -144,7 +144,7 @@ def document_input() -> tuple[str, str]:
                 st.error(f"读取失败：{exc}")
             else:
                 st.session_state["document"] = loaded.text
-                # .docx 才留下原文件：改完要写回它做一份带修订痕迹的副本
+                # .docx才留下原文件：改完要写回它做一份带修订痕迹的副本
                 st.session_state["source_docx"] = (
                     keep_source_docx(uploaded.getvalue(), uploaded.name)
                     if uploaded.name.lower().endswith(".docx")
@@ -184,13 +184,13 @@ def document_input() -> tuple[str, str]:
 
 def show_issues(request: dict) -> dict | None:
     """
-    人机协作界面：展示 Audit 的问题清单，收集用户确认与约束。
+    人机协作界面：展示Audit的问题清单，收集用户确认与约束。
 
-    返回 resume 用的 payload；用户尚未确认时返回 None。
+    返回resume用的payload；用户尚未确认时返回None。
     """
 
     issues = request.get("issues") or []
-    st.subheader("2 确认修改范围")
+    st.subheader("2确认修改范围")
     st.caption(request.get("instruction", ""))
 
     if not issues:
@@ -251,7 +251,7 @@ def show_issues(request: dict) -> dict | None:
 
 
 def show_issue_decisions(request: dict) -> dict | None:
-    st.subheader("2 选择统一口径")
+    st.subheader("2选择统一口径")
     st.caption(request.get("instruction", ""))
     choices = {}
     prefix = f"{request.get('run_id')}:{request.get('turn')}:{request.get('iteration')}"
@@ -292,7 +292,7 @@ def _show_patch_details(patches: list[dict]) -> None:
 
 
 def show_patch_review(request: dict) -> dict | None:
-    st.subheader("2 审阅修改清单")
+    st.subheader("2审阅修改清单")
     st.caption(request.get("instruction", ""))
     patches = request.get("patches") or []
     _show_patch_details(patches)
@@ -309,7 +309,7 @@ def show_patch_review(request: dict) -> dict | None:
 
 
 def show_final_confirm(request: dict) -> dict | None:
-    st.subheader("2 确认生成文件")
+    st.subheader("2确认生成文件")
     st.caption(request.get("instruction", ""))
     patches = request.get("patches") or []
     _show_patch_details(patches)
@@ -354,10 +354,10 @@ def show_results(result) -> None:
     """展示最终结果。"""
 
     state = result.state
-    st.subheader("3 修改结果")
+    st.subheader("3修改结果")
 
     columns = st.columns(4)
-    columns[0].metric("Review 结论", (result.review_status or "未执行").upper())
+    columns[0].metric("Review结论", (result.review_status or "未执行").upper())
     columns[1].metric("修改轮次", state.get("iteration", 0))
     columns[2].metric("落实修改", len(state.get("revision_edits") or []))
     columns[3].metric(
@@ -381,13 +381,13 @@ def show_results(result) -> None:
     with tab_document:
         if result.docx_path and Path(result.docx_path).exists():
             st.success(
-                "已生成 Word 副本（保留原文件，改动以**修订痕迹**标注，"
-                "每条改动都带批注说明理由）。在 Word / WPS 里打开后，"
+                "已生成Word副本（保留原文件，改动以**修订痕迹**标注，"
+                "每条改动都带批注说明理由）。在Word / WPS里打开后，"
                 "可以逐条接受或拒绝。"
             )
             docx_bytes = Path(result.docx_path).read_bytes()
             st.download_button(
-                "下载 Word 副本（带修订痕迹）",
+                "下载Word副本（带修订痕迹）",
                 data=docx_bytes,
                 file_name=Path(result.docx_path).name,
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -396,7 +396,7 @@ def show_results(result) -> None:
             skipped = (state.get("redline_summary") or {}).get("skipped")
             if skipped:
                 st.warning(
-                    f"另有 {skipped} 条改动无法自动写回 Word"
+                    f"另有 {skipped} 条改动无法自动写回Word"
                     "（多与公式、图片或跨单元格有关），已在文档原位留批注。"
                 )
                 with st.expander("看看是哪几条、该怎么手工改", expanded=True):
@@ -459,7 +459,7 @@ def main() -> None:
     init_state()
 
     settings = get_settings()
-    st.title("学术论文智能修改 Multi-Agent 系统")
+    st.title("学术论文智能修改Multi-Agent系统")
     st.caption(
         "LangGraph Workflow：Orchestrator → Audit → Human Approval → Revision → Review → Report"
     )

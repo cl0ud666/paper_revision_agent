@@ -1,11 +1,11 @@
 """
-Review Agent：独立复核（Revision 的对照面）。
+Review Agent：独立复核（Revision的对照面）。
 
-职责非常明确：当前修改结果是否已经满足任务要求？输出 pass / fail。
+职责非常明确：当前修改结果是否已经满足任务要求？输出pass / fail。
 
-它不修改论文，也不替 Orchestrator 做规划。
+它不修改论文，也不替Orchestrator做规划。
 
-除了让 LLM 判断语义层面的满足度，这里还做了一层确定性检查：
+除了让LLM判断语义层面的满足度，这里还做了一层确定性检查：
 
 - 修改后文本是否为空、是否明显变短（防止内容丢失）；
 - 有目标问题却一处修改都没落实；
@@ -48,7 +48,7 @@ def run(
     recorder: Any | None = None,
     logger: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    """执行一次独立复核，返回写回 State 的字段。"""
+    """执行一次独立复核，返回写回State的字段。"""
 
     log = logger or print
     run_id = state.get("run_id", "adhoc")
@@ -93,7 +93,7 @@ def run(
         log(f"[Review] 复核失败（{type(exc).__name__}: {exc}），按未通过处理。")
         result = {
             "status": "fail",
-            "summary": f"Review Agent 执行失败：{exc}",
+            "summary": f"Review Agent执行失败：{exc}",
             "per_issue": [],
             "remaining_issues": list(forced_remaining),
             "constraint_violations": [],
@@ -145,7 +145,7 @@ def run(
             result["status"] = "pass"
 
     # 用户拒绝 = 主动缩小范围：这些改动不算“未解决的问题”，
-    # 否则多轮里会一直被判 fail、一直重复打扰用户。
+    # 否则多轮里会一直被判fail、一直重复打扰用户。
     profiles = _rejected_profiles(state)
     ignored_profiles = _ignored_profiles(state)
     if profiles or ignored_profiles:
@@ -169,7 +169,7 @@ def run(
                 }
             )
 
-        # 如果判 fail 的唯一理由是那些被拒绝的改动，且本轮工作本身没问题，就改判通过
+        # 如果判fail的唯一理由是那些被拒绝的改动，且本轮工作本身没问题，就改判通过
         status_before = str(result.get("status") or "").lower()
         if (
             status_before == "fail"
@@ -193,7 +193,7 @@ def run(
         result["remaining_issues"] = merged
 
     status = str(result.get("status") or "fail").lower()
-    # 只要存在硬失败或“强制剩余问题”，即使模型自己说 pass 也不放行
+    # 只要存在硬失败或“强制剩余问题”，即使模型自己说pass也不放行
     result["status"] = (
         "pass" if status == "pass" and not hard_fail and not forced_remaining else "fail"
     )
@@ -224,9 +224,9 @@ def _consistency_issues(state: Any, document: str) -> list[dict[str, Any]]:
     """
     跨批次一致性（确定性检查，不依赖模型）。
 
-    "批 2 把土豆改成了马铃薯，批 5 那一段还写着土豆" —— 这类问题以前只能靠
-    Review 那一次全局判断，而长文时它的视野会被预算截断。这里用补丁反推出的
-    术语表（加上用户要求里的"把 A 写成 B"）全文扫一遍，命中就要求下一轮补上。
+    "批2把土豆改成了马铃薯，批5那一段还写着土豆" —— 这类问题以前只能靠
+    Review那一次全局判断，而长文时它的视野会被预算截断。这里用补丁反推出的
+    术语表（加上用户要求里的"把A写成B"）全文扫一遍，命中就要求下一轮补上。
     """
 
     from app.document.spans import build_spans
@@ -578,7 +578,7 @@ def _precheck(
         checks.append({"name": "排版结构", "status": "ok", "detail": "标题与列表标记正常"})
 
     # 术语的频次、形近和章节分布都不能确定语义错误。
-    # 具体位置的术语正确性由带上下文的语义复核判断，不能生成 forced_remaining。
+    # 具体位置的术语正确性由带上下文的语义复核判断，不能生成forced_remaining。
 
     # 7) 约束存在性（信息性检查）
     constraints = state.get("human_constraints") or []
@@ -602,7 +602,7 @@ def _llm_review(
     targets: list[dict[str, Any]],
     logger: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    """调用 Review Agent 做语义层面的独立判断。"""
+    """调用Review Agent做语义层面的独立判断。"""
 
     settings = get_settings()
     document = state.get("current_document") or ""
@@ -630,7 +630,7 @@ def _llm_review(
             + (state.get("applied_patches") or [])
             + (state.get("rejected_patches") or []),
             "original_excerpt": "\n\n".join(pairs) if pairs else "（本轮没有产生修改）",
-            # 这里传完整文档，交给 Context 预算统一裁剪；
+            # 这里传完整文档，交给Context预算统一裁剪；
             # 预先截断会让复核员看到“残缺文本”而误判内容缺失。
             "revised_excerpt": document,
         },
@@ -659,7 +659,7 @@ def _llm_review(
 
 
 def _normalize_review(data: dict[str, Any]) -> dict[str, Any]:
-    """规范化 Review Agent 的输出。"""
+    """规范化Review Agent的输出。"""
 
     status = str(data.get("status") or "").strip().lower()
     if status not in {"pass", "fail"}:

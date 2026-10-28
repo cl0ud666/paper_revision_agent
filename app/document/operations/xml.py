@@ -115,7 +115,7 @@ def _range_runs(paragraph, quote):
         if selected is not None:
             runs.append(selected)
     if not runs:
-        raise ValueError("未找到普通文字 run")
+        raise ValueError("未找到普通文字run")
     return runs
 
 

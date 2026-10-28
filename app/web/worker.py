@@ -1,4 +1,4 @@
-"""每个 Celery 执行片段运行到人工闸门或结束，随后释放 Worker。"""
+"""每个Celery执行片段运行到人工闸门或结束，随后释放Worker。"""
 
 import logging
 import threading
@@ -33,7 +33,7 @@ _test_locks_guard = threading.Lock()
 
 @contextmanager
 def exclusive_run(run_id):
-    """会话级 advisory lock 保证同一论文不会被两个重复任务同时执行。"""
+    """会话级advisory lock保证同一论文不会被两个重复任务同时执行。"""
     if engine().dialect.name != "postgresql":
         with _test_locks_guard:
             lock = _test_locks.setdefault(run_id, threading.Lock())
@@ -76,7 +76,7 @@ class WebCallPolicy:
             with transaction() as db:
                 run = db.scalar(select(Run).where(Run.id == self.run_id).with_for_update())
                 if self.job_id and db.get(Job, self.job_id).execution_token != self.execution_token:
-                    raise RuntimeError("该执行片段已由新的 Worker 接管")
+                    raise RuntimeError("该执行片段已由新的Worker接管")
                 if run.status in {"cancel_requested", "cancelled"}:
                     raise RuntimeError("用户已取消任务")
                 if run.used_tokens + run.reserved_tokens + amount > run.token_limit:
@@ -165,7 +165,7 @@ def drive_workflow(run, job, harness):
     run_dir.mkdir(parents=True, exist_ok=True)
     source = run_dir / "source.docx"
     source.write_bytes(source_data)
-    # 已有 Checkpoint 时不重新 start，也不会触碰已应用的修改。
+    # 已有Checkpoint时不重新start，也不会触碰已应用的修改。
     snapshot = harness.graph.get_state(harness._config())
     state = dict(snapshot.values or {})
     if not state:
@@ -173,7 +173,7 @@ def drive_workflow(run, job, harness):
         if loaded.chars > 200000:
             raise ValueError("论文正文超过第一版处理长度限制")
         if not loaded.can_write_back:
-            raise RuntimeError("文档无法生成修订版，请检查文档或安装完整 Word 依赖")
+            raise RuntimeError("文档无法生成修订版，请检查文档或安装完整Word依赖")
         initial = _initial_input(run, loaded.text, source)
         initial["input_warnings"] = (
             [] if run.document_name.lower().endswith(".docx") else [CONVERSION_WARNING]
@@ -245,7 +245,7 @@ def execute_job(job_id, harness_factory=Harness):
             with install_policy(run_id, policy):
                 result = drive_workflow(run, job, harness)
             if result.status == "failed":
-                raise RuntimeError(result.error or "Workflow 执行失败")
+                raise RuntimeError(result.error or "Workflow执行失败")
             preview = result.state.get("preview_manifest") or {}
             if preview.get("pages"):
                 cache = get_settings().paths.run_dir(run.id) / "preview" / preview["fingerprint"]
@@ -264,7 +264,7 @@ def execute_job(job_id, harness_factory=Harness):
             if result.status == "completed":
                 state = result.state
                 if (state.get("redline_summary") or {}).get("error"):
-                    raise RuntimeError("Word 修订文件生成失败，请重试或检查文档")
+                    raise RuntimeError("Word修订文件生成失败，请重试或检查文档")
                 target = Path(result.docx_path) if result.docx_path else None
                 if target and target.exists():
                     document = target.read_bytes()
@@ -274,7 +274,7 @@ def execute_job(job_id, harness_factory=Harness):
                 ):
                     document = store().get(run.source_key + ".normalized.docx")
                 else:
-                    raise RuntimeError("未生成有效的 Word 修订文件，请重试")
+                    raise RuntimeError("未生成有效的Word修订文件，请重试")
                 from app.agents.report import build_report
 
                 report = result.final_report or build_report(state)

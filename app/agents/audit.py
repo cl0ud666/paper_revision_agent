@@ -10,15 +10,15 @@ Audit Agent：系统性发现问题。
          → ④ 逐字核对证据 + 合并去重 + 按严重程度取舍
 
 与上一版的区别：**分块按段落边界切**（不是按字符切），
-因此模型看到的每个块都带段落 ID（``[P03]``），
-它给出的每条问题也都会带上这个 ID——后续 Revision 才能精确落补丁。
+因此模型看到的每个块都带段落ID（``[P03]``），
+它给出的每条问题也都会带上这个ID——后续Revision才能精确落补丁。
 
 为什么是"并发 + 事后全局对齐"，而不是"后面的批次看前面的发现"：
 分块之间没有依赖（每块只读自己的文本），所以可以并行；但也正因为并行，
 任何一块都看不到别的块报了什么。串行的"后者看前者"只有后面的能看到前面的，
 全局对齐则让每个发现都要和其它所有发现对一遍，覆盖更全。
 
-硬约束：evidence 必须逐字来自该段落，这样补丁校验能一次通过。
+硬约束：evidence必须逐字来自该段落，这样补丁校验能一次通过。
 """
 
 from __future__ import annotations
@@ -195,7 +195,7 @@ def _name_check_issues(
 
 def _serialized_logger(log: Callable[[str], None]) -> Callable[[str], None]:
     """
-    把 logger 包成线程安全的。
+    把logger包成线程安全的。
 
     并发跑分块时多个线程会同时输出，不加锁的话行与行会互相穿插。
     这里只串行化**输出**，不串行化执行。
@@ -227,7 +227,7 @@ class _ChunkBatch:
     outcomes: dict[int, _ChunkOutcome] = field(default_factory=dict)
     budget_stopped: bool = False
     budget_snapshot: dict[str, Any] | None = None
-    # 实际生效的并发度（受 PRA_AUDIT_CONCURRENCY 与分块总数共同约束）
+    # 实际生效的并发度（受PRA_AUDIT_CONCURRENCY与分块总数共同约束）
     concurrency: int = 1
 
 
@@ -320,12 +320,12 @@ def _run_chunks(
     """
     跑完所有分块的审查。
 
-    - 并发度取 ``PRA_AUDIT_CONCURRENCY``，并受分块总数约束
-      （不会为 3 个分块开 6 个线程）；
+    - 并发度取``PRA_AUDIT_CONCURRENCY``，并受分块总数约束
+      （不会为3个分块开6个线程）；
     - 预算检查放在**提交环节**（串行）：预算耗尽就不再提交剩余分块，
       保留"超预算降级而不是崩"的原有语义；
     - 单个分块失败只记一次失败，不影响其它分块；
-    - 结果按分块序号收集，保证 issue 编号不随网络抖动变化。
+    - 结果按分块序号收集，保证issue编号不随网络抖动变化。
     """
 
     batch = _ChunkBatch()
@@ -399,8 +399,8 @@ def _apply_duplicate_groups(
     if not isinstance(groups, list):
         return [dict(issue) for issue in issues], 0
 
-    # 注意：assigned 里存的始终是**模型给的 1 起始编号**，
-    # members 也是；换算成 0 起始只在最后重建时做一次。
+    # 注意：assigned里存的始终是**模型给的1起始编号**，
+    # members也是；换算成0起始只在最后重建时做一次。
     assigned: set[int] = set()
     keep_for: dict[int, int] = {}
     merged_count = 0
@@ -469,7 +469,7 @@ def _cross_check_candidates(
     报了什么，所以同一个毛病可能被报好几遍，甚至两条发现互相打架。
     全局视角下每个候选都要和其它所有候选对一遍，比"后面的批次看到前面的发现"更强。
 
-    失败一律降级：返回原候选、不合并、不补充，绝不让整个 Audit 挂掉。
+    失败一律降级：返回原候选、不合并、不补充，绝不让整个Audit挂掉。
     """
 
     try:
@@ -579,8 +579,8 @@ def _run_targeted_checks(
         material = (
             f"对照关系：{comparison['title']}\n"
             f"只看：{comparison['focus']}\n\n"
-            f"=== 材料 A ===\n{comparison['left']}\n\n"
-            f"=== 材料 B ===\n{comparison['right']}"
+            f"=== 材料A ===\n{comparison['left']}\n\n"
+            f"=== 材料B ===\n{comparison['right']}"
         )
         fields = build_context(
             state,
@@ -674,12 +674,12 @@ def _whole_paper_check(
     """
     整篇送审，专查跨章节矛盾。
 
-    逐段审查哪怕切得再细，也看不到"摘要说 95%、结论说 89%"这种跨越全文的矛盾——
+    逐段审查哪怕切得再细，也看不到"摘要说95%、结论说89%"这种跨越全文的矛盾——
     它天然需要同时看到首尾。所以这里不分块，把整篇放进一次调用。
 
     超长时按"头尾保留"截断：摘要与结论正好在首尾，也是矛盾最常出现的位置。
 
-    ``known_issues`` 是**分块审查等环节已经发现的问题**。把它们一起交给模型、
+    ``known_issues``是**分块审查等环节已经发现的问题**。把它们一起交给模型、
     要求不要重复报——否则它那几条输出配额会被"错别字"这种局部问题占满，
     一条跨段矛盾都报不出来。
 
@@ -714,8 +714,8 @@ def _whole_paper_check(
             "\n\n以下是其它环节**已经报过**的问题。请做两件事：\n"
             "① 把它们之外的跨段矛盾找出来（不要重复报这些本身）；\n"
             "② **补全它们的范围**——逐条对照全文，如果某条问题在别的位置也成立，\n"
-            "   就输出一条对应条目，把**所有相关位置**（含原清单里那处）写进 span_labels，\n"
-            "   并在 problem 里注明「这是对『<原问题摘要>』的范围补充」。只补位置，不重复描述问题。\n"
+            "   就输出一条对应条目，把**所有相关位置**（含原清单里那处）写进span_labels，\n"
+            "   并在problem里注明「这是对『<原问题摘要>』的范围补充」。只补位置，不重复描述问题。\n"
             + already_text
         )
     fields = build_context(
@@ -764,16 +764,16 @@ def _whole_paper_check(
 
 def _variation_issues(naming_hint: list[dict[str, Any]], *, limit: int = 3) -> list[dict[str, Any]]:
     """
-    把"同一个名称有几种写法"变成**一条 decision 问题**。
+    把"同一个名称有几种写法"变成**一条decision问题**。
 
     这条问题**由程序生成，不经过模型**，理由是两件事模型都做不好：
 
-    - **位置要穷尽**（全文 40+ 处），模型在长文里列不全，输出也会被挤爆；
-    - **选项要能执行**（"全文统一为 MOCO"），下游拿它做确定性替换，
+    - **位置要穷尽**（全文40+ 处），模型在长文里列不全，输出也会被挤爆；
+    - **选项要能执行**（"全文统一为MOCO"），下游拿它做确定性替换，
       模型给的自由文本解析不出来。
 
-    生成的问题带 `span_labels`（全部位置）和由变体直接生成的 `options`，
-    用户在闸门上选一个，Revision 再据此全文替换。
+    生成的问题带`span_labels`（全部位置）和由变体直接生成的`options`，
+    用户在闸门上选一个，Revision再据此全文替换。
     """
 
     issues: list[dict[str, Any]] = []
@@ -824,7 +824,7 @@ def run(
     recorder: Any | None = None,
     logger: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    """执行一次完整审查，返回写回 State 的字段。"""
+    """执行一次完整审查，返回写回State的字段。"""
 
     log = logger or print
     settings = get_settings()
@@ -860,10 +860,10 @@ def run(
     # 用户明确要求：代码一律不碰，连建议都不给。
     prose_spans = [span for span in auditable if not looks_like_code(span.text)]
     naming_hint = find_naming_variants(prose_spans)
-    # 由扫描结果**直接生成**一条 decision 问题（带全部位置 + 可执行的选项），
-    # 不指望模型把 40 多处列全。
+    # 由扫描结果**直接生成**一条decision问题（带全部位置 + 可执行的选项），
+    # 不指望模型把40多处列全。
     variation_issues = _variation_issues(naming_hint)
-    # 补上 span_id（下游按 id 定位；缺了会在逐字核对那一步被丢掉）
+    # 补上span_id（下游按id定位；缺了会在逐字核对那一步被丢掉）
     _by_label = {span.label: span for span in auditable}
     for _issue in variation_issues:
         _span = _by_label.get(str(_issue.get("span_label") or ""))
@@ -877,13 +877,13 @@ def run(
     )
     if dropped_chunks:
         log(
-            f"[Audit] 注意：受上限 PRA_AUDIT_MAX_CHUNKS={max_chunks} 限制，"
+            f"[Audit] 注意：受上限PRA_AUDIT_MAX_CHUNKS={max_chunks} 限制，"
             f"后面 {dropped_chunks} 批没有审到（整篇共 {len(all_chunks)} 批）。"
-            "需要审全文请调大 PRA_AUDIT_MAX_CHUNKS 或 PRA_AUDIT_CHUNK_TOKENS。"
+            "需要审全文请调大PRA_AUDIT_MAX_CHUNKS或PRA_AUDIT_CHUNK_TOKENS。"
         )
 
     # 分块会并发执行：日志必须串行化输出（否则行与行会互相穿插），
-    # Guard 也是按 Agent 共享的单例，通知统一走这个 emitter。
+    # Guard也是按Agent共享的单例，通知统一走这个emitter。
     emitter = _serialized_logger(log)
     guard = get_guard("audit", on_event=emitter)
     raw_issues: list[dict[str, Any]] = []
@@ -894,7 +894,7 @@ def run(
     raw_issues.extend(variation_issues)
 
     # 分块之间没有依赖（每块只读自己的文本），因此可以并行跑。
-    # 注意：**按分块序号收集结果**，不是按完成顺序——否则 issue 的编号会随
+    # 注意：**按分块序号收集结果**，不是按完成顺序——否则issue的编号会随
     # 网络抖动变化，报告与用户看到的编号都不稳定。
     batch = _run_chunks(
         chunks,
@@ -919,7 +919,7 @@ def run(
 
     start_id = int(state.get("issue_counter", 0)) + 1
     # 专名核验：单独一次调用，判断"写法本身对不对"
-    # （"阿里云 ESC"应为 ECS——正确写法根本不需要在文中出现过）
+    # （"阿里云ESC"应为ECS——正确写法根本不需要在文中出现过）
     if settings.context.audit_name_check:
         try:
             check(state, agent="audit", stage="name_check")
@@ -1013,7 +1013,7 @@ def run(
             naming_hint=naming_hint,
             settings=settings,
             # 把分块/专名/定向已经报过的问题交给整篇：
-            # 否则它那 15 条输出配额会被"错别字"这类局部问题占满，
+            # 否则它那15条输出配额会被"错别字"这类局部问题占满，
             # 一条跨段矛盾都报不出来。
             known_issues=raw_issues,
         )

@@ -1,5 +1,5 @@
 """
-把"已接受的改动"写回 Word 原文件：**Word 原生修订痕迹 + 批注**。
+把"已接受的改动"写回Word原文件：**Word原生修订痕迹 + 批注**。
 
 这是整条链路里最后、也是用户唯一真正打开的东西。
 它的原则只有一条：**不确定就不改，并把"为什么没改"留成批注让用户自己决定**。
@@ -7,23 +7,23 @@
 能写回的三种情况：
 
 1. **整段重写**：范围覆盖整段的全部内容（含公式、图片、换行）时，
-   把这一段原有的内容整体包进 ``<w:del>``，再用 ``<w:ins>`` 插入新文字；
-2. **句内替换**：范围落在一段连续的普通文字里时，按 run 切开，
-   只把被替换的那几个字标成 ``<w:del>`` / ``<w:ins>``；
+   把这一段原有的内容整体包进``<w:del>``，再用``<w:ins>``插入新文字；
+2. **句内替换**：范围落在一段连续的普通文字里时，按run切开，
+   只把被替换的那几个字标成``<w:del>`` / ``<w:ins>``；
 3. **表格单元格内替换**：只要改动不跨单元格，处理和普通段落一样。
 
 写不回去的情况（写回层**拒绝**，而不是猜）：
 
-- 改动跨了多个段落或单元格（Markdown 表格里的竖线在 Word 里不存在）；
+- 改动跨了多个段落或单元格（Markdown表格里的竖线在Word里不存在）；
 - 改动范围里有图片、公式、换行、制表符，而它不是整段重写；
 - 原文与补丁里记的"修改前"对不上（说明文档在中间被别的程序动过）。
 
-每条改动都带一条 Word 批注写明理由；写不进去的改动也会在原地留批注，
+每条改动都带一条Word批注写明理由；写不进去的改动也会在原地留批注，
 这样用户不必回去翻报告就知道"还有哪一条要自己动手"。
 
-关于"重放"：回写不是把最后一次的文字翻译成 Word，而是
+关于"重放"：回写不是把最后一次的文字翻译成Word，而是
 **原文件 + 第一轮改动 + 第二轮改动……** 逐轮落实。
-每一条补丁在生成时都已经过三重校验（段落 ID + 句子序号 + 原文引用），
+每一条补丁在生成时都已经过三重校验（段落ID + 句子序号 + 原文引用），
 所以重放出来的文字与当时的文档逐字一致。
 """
 
@@ -57,13 +57,13 @@ DEFAULT_AUTHOR = "论文修改助手"
 
 
 def _utc_now() -> str:
-    """Word 习惯的 ISO 时间（带 Z 后缀）。"""
+    """Word习惯的ISO时间（带Z后缀）。"""
 
     return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _int_or(value: Any, default: int) -> int:
-    """把补丁里的数字读成 int（0 是合法值，不能被当成"没有"）。"""
+    """把补丁里的数字读成int（0是合法值，不能被当成"没有"）。"""
 
     if value is None or value == "":
         return default
@@ -96,7 +96,7 @@ class RedlineOutcome:
         return bool(self.applied)
 
     def summary(self) -> str:
-        parts = [f"写回 {len(self.applied)} 条改动（Word 修订痕迹）"]
+        parts = [f"写回 {len(self.applied)} 条改动（Word修订痕迹）"]
         if self.skipped:
             parts.append(f"{len(self.skipped)} 条需要人工处理")
         parts.append(f"附 {self.comments} 条批注")
@@ -150,7 +150,7 @@ class Change:
 
 
 class Unlocatable(ValueError):
-    """这条改动无法安全落到 XML 上（原因写给用户看）。"""
+    """这条改动无法安全落到XML上（原因写给用户看）。"""
 
 
 def _locate(
@@ -161,7 +161,7 @@ def _locate(
     text: str,
 ) -> Change:
     """
-    把一条补丁翻译成"改哪几个 XML 节点、从哪到哪"。
+    把一条补丁翻译成"改哪几个XML节点、从哪到哪"。
 
     这里**不做任何猜测**：任何一个条件不满足就直接说原因。
     宁可让用户手工改一个字，也不要把论文改错。
@@ -194,7 +194,7 @@ def _locate(
 
     local_start = start - block.start
     local_end = end - block.start
-    # 改动范围必须完整落在同一个块里（Markdown 装饰、块之间的空行都不算内容）
+    # 改动范围必须完整落在同一个块里（Markdown装饰、块之间的空行都不算内容）
     if local_start < 0 or local_end > len(block.text):
         raise Unlocatable("这条改动跨了文档结构，需要人工处理")
 
@@ -208,7 +208,7 @@ def _locate(
 
     obstacles = block.obstacles_in(local_start, local_end)
     if obstacles:
-        # 引文序号（[4]、[5]）在 Word 里是交叉引用域（REF），不是普通文字。
+        # 引文序号（[4]、[5]）在Word里是交叉引用域（REF），不是普通文字。
         # 改它要同步后面的参考文献编号，机器判断不了，一律交给人。
         if any(tag.endswith(":fldChar") for tag in obstacles):
             raise Unlocatable("这条改动需要同步后面文献引用，需要人工处理")
@@ -252,7 +252,7 @@ def _locate(
 
 
 class RedlineWriter:
-    """在 :class:`DocxSource` 上生成修订痕迹与批注。"""
+    """在 :class:`DocxSource`上生成修订痕迹与批注。"""
 
     def __init__(
         self,
@@ -280,7 +280,7 @@ class RedlineWriter:
     # ---------- 编号与基础部件 ----------
 
     def _scan_ids(self) -> int:
-        """修订/批注的 w:id 不能与文档里已有的撞号。"""
+        """修订/批注的w:id不能与文档里已有的撞号。"""
 
         highest = 0
         roots = [self.source.document_root]
@@ -321,7 +321,7 @@ class RedlineWriter:
         return element
 
     def _ensure_settings(self) -> None:
-        """打开文档的"修订模式"，这样用户在 Word 里能直接看到痕迹。"""
+        """打开文档的"修订模式"，这样用户在Word里能直接看到痕迹。"""
 
         etree = self.etree
         name = "word/settings.xml"
@@ -343,7 +343,7 @@ class RedlineWriter:
         return "word/_rels/document.xml.rels"
 
     def _add_relationship(self, target: str, rel_type: str) -> None:
-        """确保 document.xml 与某个部件之间有关系（否则 Word 会认为文件损坏）。"""
+        """确保document.xml与某个部件之间有关系（否则Word会认为文件损坏）。"""
 
         etree = self.etree
         raw = self.source.parts.get(self._rels_path())
@@ -427,7 +427,7 @@ class RedlineWriter:
         return comment_id
 
     def _anchor_comment(self, parent: Any, nodes: list[Any], comment_id: int) -> None:
-        """在 nodes 外面套上批注锚点（Word 认这三件套）。"""
+        """在nodes外面套上批注锚点（Word认这三件套）。"""
 
         if not nodes:
             return
@@ -455,7 +455,7 @@ class RedlineWriter:
 
         if not self.comments_enabled or paragraph is None:
             return
-        # 锚点必须和批注范围是同一个父节点，否则 Word 认为锚点无效
+        # 锚点必须和批注范围是同一个父节点，否则Word认为锚点无效
         anchor = next((child for child in paragraph if child.tag == w("r")), None)
         if anchor is None:
             anchor = next((child for child in paragraph if child.tag != w("pPr")), None)
@@ -466,7 +466,7 @@ class RedlineWriter:
     # ---------- 修订痕迹 ----------
 
     def _plain_run(self, template: Any, text: str, *, deleted: bool = False) -> Any:
-        """用原 run 的格式（rPr）造一个新 run。"""
+        """用原run的格式（rPr）造一个新run。"""
 
         etree = self.etree
         run = etree.Element(w("r"))
@@ -499,7 +499,7 @@ class RedlineWriter:
             text.tag = w("delText")
 
     def _inside_insertion(self, run: Any, paragraph: Any) -> bool:
-        """这个 run 是不是本工具（或原作者）之前插入的内容。"""
+        """这个run是不是本工具（或原作者）之前插入的内容。"""
 
         node = run.getparent()
         while node is not None and node is not paragraph:
@@ -559,7 +559,7 @@ class RedlineWriter:
             self._anchor_comment(group["nodes"][0].getparent(), group["nodes"], group["comment_id"])
 
     def _replace(self, change: Change) -> None:
-        """真正动手：把 change.start..change.end 换成新文字，并留下痕迹与批注。"""
+        """真正动手：把change.start..change.end换成新文字，并留下痕迹与批注。"""
 
         etree = self.etree
         paragraph = change.paragraph
@@ -695,8 +695,8 @@ class RedlineWriter:
         """
         取一个片段里 [start, end) 对应的文字（相对所属块文本的偏移）。
 
-        ``rendered`` 可能是 ``node.text`` 的一部分，所以这里既做块内裁剪，
-        又用 ``node_offset`` 保证与原节点的下标一致。
+        ``rendered``可能是``node.text``的一部分，所以这里既做块内裁剪，
+        又用``node_offset``保证与原节点的下标一致。
         """
 
         left = max(start, piece.start)
@@ -713,13 +713,13 @@ class RedlineWriter:
 
 def applied_rounds(state: Any) -> list[list[dict[str, Any]]]:
     """
-    从 state 里取出"每一轮真正落实的改动"，按落实顺序。
+    从state里取出"每一轮真正落实的改动"，按落实顺序。
 
     回写靠**重放**：原文件 + 第一轮改动 + 第二轮改动……
     """
 
     rounds: list[list[dict[str, Any]]] = []
-    # 用户在"写入 Word 前最后一次确认"里剔除掉的，不写进副本
+    # 用户在"写入Word前最后一次确认"里剔除掉的，不写进副本
     excluded = {str(item) for item in (state.get("excluded_patch_ids") or [])}
     if state.get("visual_review") and state.get("final_review_ready"):
         if not state.get("final_review_confirmed"):
@@ -742,13 +742,13 @@ def applied_rounds(state: Any) -> list[list[dict[str, Any]]]:
 
 def _split_run(run: Any, cuts: dict[Any, set[int]]) -> None:
     """
-    把一个 run 按给定位置切开，切成多个"只有一段文字"的 run。
+    把一个run按给定位置切开，切成多个"只有一段文字"的run。
 
-    为什么必须做：Word 里一个段落常常只有一个 run（整段文字挤在一个节点里），
-    同一段的多处改动如果都去动这一个 run，第一处就会把后面几处的目标节点拆掉。
-    先按改动边界切开，每一处改动就有了自己的 run，互不影响。
+    为什么必须做：Word里一个段落常常只有一个run（整段文字挤在一个节点里），
+    同一段的多处改动如果都去动这一个run，第一处就会把后面几处的目标节点拆掉。
+    先按改动边界切开，每一处改动就有了自己的run，互不影响。
 
-    切 run **不改变文字**，所以拆完之后字符偏移依然有效。
+    切run **不改变文字**，所以拆完之后字符偏移依然有效。
     """
 
     parent = run.getparent()
@@ -804,14 +804,14 @@ def _split_run(run: Any, cuts: dict[Any, set[int]]) -> None:
 
 
 def _new_element(parent: Any, tag: str) -> Any:
-    """在 parent 所在的文档树上新建一个元素（沿用同一套命名空间）。"""
+    """在parent所在的文档树上新建一个元素（沿用同一套命名空间）。"""
 
     return parent.makeelement(tag, {})
 
 
 def _split_for_changes(source: DocxSource, changes: list[Change]) -> None:
     """
-    按本轮所有改动的边界，把涉及到的 run 先切开。
+    按本轮所有改动的边界，把涉及到的run先切开。
 
     同一段里有多处改动时，这一步是必须的：否则第一处改动会把
     后面几处的目标节点一起换掉，后面几处就只能报"写回失败"。
@@ -916,10 +916,10 @@ def export_redline(
     suggestions: Iterable[dict[str, Any]] = (),
 ) -> RedlineOutcome:
     """
-    把若干轮的改动写回 .docx 副本。
+    把若干轮的改动写回 .docx副本。
 
-    :param source_data: **原始** .docx 的字节（不是改过的文字）
-    :param rounds: 每轮"已落实"的补丁（``Patch.to_json()`` 的形状）
+    :param source_data: **原始** .docx的字节（不是改过的文字）
+    :param rounds: 每轮"已落实"的补丁（``Patch.to_json()``的形状）
     :param suggestions: 不改正文、只在原地留批注的条目
         （``advice`` = 原文没错但可以更好／涉及代码；
         ``manual`` = 确实有问题但工具改不了，例如跨引文域）
@@ -957,7 +957,7 @@ def export_redline(
         for item in items:
             if item.get("original_checksum") and item["original_checksum"] != original_checksum:
                 outcome.skipped.append(
-                    {**item, "reason": "原始 Word 校验和与确认版本不同，禁止把补丁写入另一个版本"}
+                    {**item, "reason": "原始Word校验和与确认版本不同，禁止把补丁写入另一个版本"}
                 )
             else:
                 verified.append(item)
@@ -1012,13 +1012,13 @@ def export_redline(
                 continue
             prepared.append(change)
 
-        # 先把 run 按改动边界切开：同一段里的多处改动才不会互相拆掉目标
+        # 先把run按改动边界切开：同一段里的多处改动才不会互相拆掉目标
         _split_for_changes(source, prepared)
         source.rebuild()
         _lift_original_insertions(prepared, source, original_insertions)
         source.rebuild()
 
-        # 拆 run 不改变文字，所以偏移还有效；这里是按新的结构重新取一遍锚点
+        # 拆run不改变文字，所以偏移还有效；这里是按新的结构重新取一遍锚点
         ready: list[Change] = []
         for change in prepared:
             block = source.blocks[change.block.index]
@@ -1088,7 +1088,7 @@ def export_redline(
     source.rebuild()
 
     # 不改正文、只在原地留批注的条目（无法执行的修改）。
-    # 放在所有改动写完之后：这时 source 的偏移已经稳定，锚点不会再变。
+    # 放在所有改动写完之后：这时source的偏移已经稳定，锚点不会再变。
     if comments:
         for item in outcome.skipped:
             paragraph = failure_anchors.get(item.get("patch_id"))
@@ -1132,7 +1132,7 @@ def _manual_todo(item: dict[str, Any], reason: str, span: Span | None) -> str:
     """
     写不回的改动 → 一条能直接照着做的"待办"批注。
 
-    "这条改动没有写回 Word" 这种话对用户没有用；
+    "这条改动没有写回Word" 这种话对用户没有用；
     有用的是：在哪一段、原文是什么、建议改成什么、为什么没自动改。
     """
 
@@ -1155,7 +1155,7 @@ def _before_hint(item: dict[str, Any]) -> str:
 
 def _change_note(patch: dict[str, Any]) -> str:
     """
-    已落实的修改 → Word 批注。
+    已落实的修改 → Word批注。
 
     一处一条：将原文改为新文，并附修改依据。不另写删除/插入说明。
     """
@@ -1182,7 +1182,7 @@ def _merge_reasons(*reasons: Any) -> str:
 
 def _suggestion_note(item: dict[str, Any]) -> str:
     """
-    没落实的条目 → Word 批注。两种写法：
+    没落实的条目 → Word批注。两种写法：
 
     - ``advice``（原文没错，只是可以更好、或涉及代码）:
       此处可以…… / 原因是：……

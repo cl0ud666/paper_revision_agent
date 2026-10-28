@@ -193,8 +193,9 @@ export function VisualReview({ run }: { run: Run }) {
               <div className="review-cards" ref={cards} aria-label="修改清单">
                 {!patches.length && (
                   <p className="review-empty">
-                    当前没有可确认的自动修改。请检查下方人工处理事项；确认后保留原文，并将这些事项写入
-                    Word 批注。
+                    {
+                      '当前没有可确认的自动修改。请检查下方人工处理事项；确认后保留原文，并将这些事项写入Word批注。'
+                    }
                   </p>
                 )}
                 {patches.map((patch, index) => (
@@ -276,7 +277,7 @@ export function VisualReview({ run }: { run: Run }) {
                           <button
                             key={`${patch.patch_id}-${ri}`}
                             data-highlight={patch.patch_id}
-                            aria-label={`原文修改 ${index + 1}${ri ? ` 区域 ${ri + 1}` : ''}`}
+                            aria-label={`原文修改 ${index + 1}${ri ? `区域 ${ri + 1}` : ''}`}
                             title={`修改 ${index + 1}：${patch.before}`}
                             onClick={() => focus(patch.patch_id, true)}
                             className={`review-highlight ${focused === patch.patch_id ? 'focused' : ''} ${selected.has(patch.patch_id) ? '' : 'omitted'}`}
@@ -344,7 +345,7 @@ export function VisualReview({ run }: { run: Run }) {
       {!!request.manual_items?.length && (
         <section className="unfinished-box" aria-label="需人工修改的事项">
           <h3>以下事项无法自动修改，需人工修改</h3>
-          <p>确认后会将这些事项写入 Word 批注；不会擅自采用其它方案。</p>
+          <p>确认后会将这些事项写入Word批注；不会擅自采用其它方案。</p>
           <ol>
             {request.manual_items.map((item) => (
               <li key={item.manual_id}>

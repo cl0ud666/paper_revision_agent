@@ -123,7 +123,7 @@ def _generate_batch(
             prompt
             + "\n\n# 本批校验反馈（只重做下面的无效补丁，不能重发已成功条目）\n"
             + json.dumps(bad, ensure_ascii=False)
-            + "\n重新从上方原文逐字选择 quote，给出具体修改后内容；不要凭空设为删除。确实无需修改时返回 not_applicable。"
+            + "\n重新从上方原文逐字选择quote，给出具体修改后内容；不要凭空设为删除。确实无需修改时返回not_applicable。"
         )
         try:
             check(state, agent="revision", stage=f"repair_{batch_index}")
@@ -161,7 +161,7 @@ def run(
     recorder: Any | None = None,
     logger: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    """提出本轮全部补丁，返回写回 State 的字段。"""
+    """提出本轮全部补丁，返回写回State的字段。"""
 
     log = logger or print
     settings = get_settings()
@@ -340,7 +340,7 @@ def run(
                 round_number=iteration + 1,
                 issue=issues_by_id.get(issue_id),
             )
-            # 模型没写 issue_id 时，按它引用的段落猜一个（便于报告里对上问题）
+            # 模型没写issue_id时，按它引用的段落猜一个（便于报告里对上问题）
             if patch.issue_id is None and patch.span_id:
                 for issue in chunk_issues:
                     if issue.get("span_id") == patch.span_id:
@@ -351,8 +351,8 @@ def run(
             validate_patch(patch, spans)
             patches.append(patch)
 
-    # 用户在闸门里定了「全文统一为 X」的词级口径 → **由程序**把全文替换一遍。
-    # 不走模型：位置要穷尽（这篇 40+ 处）、替换正确性可判定、且代码不许碰。
+    # 用户在闸门里定了「全文统一为X」的词级口径 → **由程序**把全文替换一遍。
+    # 不走模型：位置要穷尽（这篇40+ 处）、替换正确性可判定、且代码不许碰。
     for patch in _unification_patches(spans, state.get("user_rules")):
         counter += 1
         patch.patch_id = next_patch_id(counter)

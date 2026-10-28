@@ -1,5 +1,5 @@
 """
-Router 单元测试：确认条件路由与迭代上限熔断符合设计。
+Router单元测试：确认条件路由与迭代上限熔断符合设计。
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ class TestAuditRouting(unittest.TestCase):
         """
         闸门不再问"有没有要忽略的"，只在**前后矛盾必须由作者拍板**时才停下来。
 
-        写错的（fix）、可以更好的（advice）都不打扰用户，直接进 Revision。
+        写错的（fix）、可以更好的（advice）都不打扰用户，直接进Revision。
         """
 
         fix_only = {"audit_findings": [{"id": 1, "kind": "fix"}], "audit_failed": False}

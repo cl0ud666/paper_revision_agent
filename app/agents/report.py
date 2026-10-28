@@ -1,7 +1,7 @@
 """
-Report 节点：把整个任务的执行结果汇总成可读报告，并落盘。
+Report节点：把整个任务的执行结果汇总成可读报告，并落盘。
 
-这里刻意**不使用 LLM**：报告是确定性的汇总，
+这里刻意**不使用LLM**：报告是确定性的汇总，
 避免“最后的输出还要依赖一次模型调用”带来的不确定性。
 """
 
@@ -27,7 +27,7 @@ def write_redline_docx(
     logger: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """
-    把已落实的改动写回 Word 原文件，另存为带**修订痕迹 + 批注**的副本。
+    把已落实的改动写回Word原文件，另存为带**修订痕迹 + 批注**的副本。
 
     为什么是"另存副本"：原文件必须一字不动地留着，
     用户要能对照、要能拒绝、要能反悔。
@@ -61,7 +61,7 @@ def write_redline_docx(
 
     path = Path(source)
     if not path.exists():
-        log(f"[Report] 找不到原始 Word 文件，跳过写回：{path}")
+        log(f"[Report] 找不到原始Word文件，跳过写回：{path}")
         return {}
 
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -76,7 +76,7 @@ def write_redline_docx(
             suggestions=suggestions,
         )
     except Exception as exc:  # noqa: BLE001 - 写回失败不该让整个任务失败
-        log(f"[Report] 写回 Word 失败（{type(exc).__name__}: {exc}），只输出文字稿。")
+        log(f"[Report] 写回Word失败（{type(exc).__name__}: {exc}），只输出文字稿。")
         if state.get("visual_review"):
             return _manual_export_fallback(
                 state,
@@ -84,7 +84,7 @@ def write_redline_docx(
                 target,
                 suggestions,
                 settings.output.redline_author,
-                f"Word 写回失败：{type(exc).__name__}: {exc}",
+                f"Word写回失败：{type(exc).__name__}: {exc}",
             )
         return {"redline_summary": {"error": f"{type(exc).__name__}: {exc}"}}
 
@@ -116,7 +116,7 @@ def write_redline_docx(
                 target,
                 suggestions,
                 settings.output.redline_author,
-                "Word 写回结果与确认清单不一致，已撤销本次自动写入",
+                "Word写回结果与确认清单不一致，已撤销本次自动写入",
             )
         summary["applied_ids"] = [p["patch_id"] for p in outcome.applied]
         reviewed_ids = {p["patch_id"] for p in state.get("final_patches") or []}
@@ -132,7 +132,7 @@ def write_redline_docx(
                 {
                     "patch_id": item["patch_id"],
                     "title": item.get("before") or item.get("quote") or "修改未写入",
-                    "blocked_reason": item.get("reason") or "Word 写回失败",
+                    "blocked_reason": item.get("reason") or "Word写回失败",
                     "suggestion": f"将「{item.get('before') or item.get('quote', '')}」改为「{item.get('replace') or '（删除）'}」",
                     "reason": item.get("rationale") or "确认的修改未能写入原文件",
                     "position": item.get("position") or "",
@@ -140,7 +140,7 @@ def write_redline_docx(
                 }
             )
         extra = {"unfinished_items": deduplicate(unfinished), "current_document": outcome.text}
-    log(f"[Report] Word 副本：{target}（{outcome.summary()}）")
+    log(f"[Report] Word副本：{target}（{outcome.summary()}）")
     return {
         "docx_path": str(target),
         "redline_summary": summary,
@@ -200,7 +200,7 @@ def _manual_export_fallback(state, source, target, suggestions, author, reason):
 
 
 def _cell(value: Any) -> str:
-    """把文本塞进 Markdown 表格单元格。"""
+    """把文本塞进Markdown表格单元格。"""
 
     text = str(value if value is not None else "").replace("|", "\\|")
     return text.replace("\n", "<br>").strip()
@@ -214,14 +214,14 @@ def _first_line(value: Any) -> str:
 
 
 def build_report(state: Any, *, trace_summary: dict[str, Any] | None = None) -> str:
-    """生成 Markdown 报告。"""
+    """生成Markdown报告。"""
 
     settings = get_settings()
     run_id = state.get("run_id", "adhoc")
     review_result = state.get("review_result") or {}
     findings = state.get("audit_findings") or []
     approved_ids = set(state.get("approved_issue_ids") or [])
-    # 汇总所有轮次的修改（revision_edits 只保留最后一轮）
+    # 汇总所有轮次的修改（revision_edits只保留最后一轮）
     edits = all_applied_edits(state)
     if state.get("visual_review") and state.get("final_review_confirmed"):
         excluded = set(state.get("excluded_patch_ids") or [])
@@ -247,10 +247,10 @@ def build_report(state: Any, *, trace_summary: dict[str, Any] | None = None) -> 
     lines.append(f"- 最终结论：{_final_conclusion(state)}")
     redline = state.get("redline_summary") or {}
     if state.get("docx_path"):
-        lines.append(f"- Word 副本（带修订痕迹）：`{state['docx_path']}`")
+        lines.append(f"- Word副本（带修订痕迹）：`{state['docx_path']}`")
         if redline.get("skipped"):
             lines.append(
-                f"- 其中 {redline.get('skipped')} 条改动无法自动写回 Word，"
+                f"- 其中 {redline.get('skipped')} 条改动无法自动写回Word，"
                 "已在原位留批注，需要人工处理（见第四节末尾）"
             )
     lines.append("")
@@ -283,7 +283,7 @@ def build_report(state: Any, *, trace_summary: dict[str, Any] | None = None) -> 
                 f"⚠ 受上限限制，本次只审到前 {meta.get('chunks', 0)} 批"
                 f"（整篇共 {meta.get('chunks_total', 0)} 批），"
                 f"后面 {meta.get('chunks_dropped')} 批**没有审**；"
-                "需要审全文请调大 `PRA_AUDIT_MAX_CHUNKS` 或 `PRA_AUDIT_CHUNK_TOKENS`。"
+                "需要审全文请调大`PRA_AUDIT_MAX_CHUNKS`或`PRA_AUDIT_CHUNK_TOKENS`。"
             )
         lines.append("")
     if findings:
@@ -330,7 +330,7 @@ def build_report(state: Any, *, trace_summary: dict[str, Any] | None = None) -> 
         rejected_total = sum(len(entry.get("rejected") or []) for entry in patch_rounds)
         lines.append(
             f"- 补丁审阅：共 {len(patch_rounds)} 轮，用户接受 {accepted_total} 条、"
-            f"拒绝 {rejected_total} 条（逐条决定，理由由 Agent 提供）"
+            f"拒绝 {rejected_total} 条（逐条决定，理由由Agent提供）"
         )
     if state.get("human_decision"):
         lines.append(f"- 问题范围确认：{state['human_decision']}")
@@ -391,7 +391,7 @@ def build_report(state: Any, *, trace_summary: dict[str, Any] | None = None) -> 
         lines.append("")
     if edits:
         lines.append(
-            "| # | 补丁 | 轮次 | 段落 | 修改前 | 修改后 | 修改理由（由 Agent 给出） | 决定 |"
+            "| # | 补丁 | 轮次 | 段落 | 修改前 | 修改后 | 修改理由（由Agent给出） | 决定 |"
         )
         lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
         for position, edit in enumerate(edits, start=1):
@@ -432,19 +432,19 @@ def build_report(state: Any, *, trace_summary: dict[str, Any] | None = None) -> 
                 f"{patch.get('span_label') or patch.get('span_id') or ''}："
                 f"「{_cell((patch.get('before') or '')[:60])}」→"
                 f"「{_cell((patch.get('replace') or '')[:60])}」"
-                f"｜Agent 给的理由：{_cell((patch.get('rationale') or '—')[:80])}"
+                f"｜Agent给的理由：{_cell((patch.get('rationale') or '—')[:80])}"
             )
         lines.append("")
 
-    # 写不回 Word 的改动：这些必须在 Word 里手工处理，所以单独列出来
+    # 写不回Word的改动：这些必须在Word里手工处理，所以单独列出来
     skipped_items = (state.get("redline_summary") or {}).get("skipped_items") or []
     if skipped_items:
-        lines.append("### 需要在 Word 里人工处理的改动")
+        lines.append("### 需要在Word里人工处理的改动")
         lines.append("")
         lines.append(
-            "下面这些改动已经通过审核，但没办法安全地写回 Word"
+            "下面这些改动已经通过审核，但没办法安全地写回Word"
             "（多与公式、图片、跨单元格或排版有关），"
-            "已在文档对应段落留下批注（作者：论文修改助手），请在 Word 里手工确认。"
+            "已在文档对应段落留下批注（作者：论文修改助手），请在Word里手工确认。"
         )
         lines.append("")
         lines.append("| 补丁 | 位置 | 原文 | 建议改为 | 为什么没自动改 |")
@@ -468,7 +468,7 @@ def build_report(state: Any, *, trace_summary: dict[str, Any] | None = None) -> 
         lines.append("")
         for edit in failed_edits:
             lines.append(
-                f"- 问题 {edit.get('issue_id')}：原因 `{edit.get('reason')}`"
+                f"- 问题 {edit.get('issue_id')}：原因`{edit.get('reason')}`"
                 f"，定位片段：{_cell(str(edit.get('find', ''))[:80])}"
             )
         lines.append("")
@@ -490,7 +490,7 @@ def build_report(state: Any, *, trace_summary: dict[str, Any] | None = None) -> 
 
     per_issue = review_result.get("per_issue") or []
     if per_issue:
-        lines.append("| 问题 ID | 状态 | 判断依据 |")
+        lines.append("| 问题ID | 状态 | 判断依据 |")
         lines.append("| --- | --- | --- |")
         for item in per_issue:
             lines.append(
@@ -579,11 +579,11 @@ def _final_conclusion(state: Any) -> str:
 
 def _trace_table(trace_summary: dict[str, Any] | None) -> str:
     if not trace_summary:
-        return "（无 Trace 数据）"
+        return "（无Trace数据）"
 
     per_agent = trace_summary.get("per_agent") or {}
     if not per_agent:
-        return "（无 Trace 数据）"
+        return "（无Trace数据）"
 
     lines = [
         "| Agent | 调用次数 | 失败 | 重试 | 总耗时(ms) | Tokens |",
@@ -625,13 +625,13 @@ def _budget_table(state: Any, trace_summary: dict[str, Any] | None) -> str:
     )
     calls = budget.get("calls_per_agent") or {}
     if calls:
-        lines.append("- 各 Agent 调用次数：" + "，".join(f"{k} {v}" for k, v in calls.items()))
+        lines.append("- 各Agent调用次数：" + "，".join(f"{k} {v}" for k, v in calls.items()))
     lines.append(
         f"- 重试 {budget.get('retries', totals.get('retries', 0))} 次，"
         f"失败 {budget.get('failures', totals.get('failures', 0))} 次"
     )
     if (state.get("audit_meta") or {}).get("budget_stopped"):
-        lines.append("- 降级：Audit 因预算不足提前停止（只审查了部分内容）")
+        lines.append("- 降级：Audit因预算不足提前停止（只审查了部分内容）")
     if budget.get("exceeded"):
         lines.append(f"- 已超出预算并降级：{budget.get('reason')}")
     return "\n".join(lines)
@@ -643,14 +643,14 @@ def write_outputs(
     trace_summary: dict[str, Any] | None = None,
     logger: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    """把报告、修改后论文、状态快照写入 data/runs/<run_id>/。"""
+    """把报告、修改后论文、状态快照写入data/runs/<run_id>/。"""
 
     log = logger or print
     settings = get_settings()
     run_id = state.get("run_id", "adhoc")
     run_dir = settings.paths.run_dir(run_id)
 
-    # 先把改动写回 Word（另存副本）：这样报告里能一起说明结果
+    # 先把改动写回Word（另存副本）：这样报告里能一起说明结果
     redline = write_redline_docx(state, run_dir=run_dir, logger=log)
     if redline:
         state = {**state, **redline}
@@ -693,7 +693,7 @@ def write_outputs(
         )
         paths["edits_path"] = str(edits_path)
 
-        # 状态快照：剔除体积很大的 trace（trace 已单独写在 trace.jsonl）
+        # 状态快照：剔除体积很大的trace（trace已单独写在trace.jsonl）
         snapshot = {key: value for key, value in dict(state).items() if key != "trace"}
         state_path = run_dir / "state.json"
         state_path.write_text(

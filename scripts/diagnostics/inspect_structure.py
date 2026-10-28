@@ -41,7 +41,7 @@ def main() -> int:
             f"按噪声跳过 {report['skipped_noise']} 个；默认送审 {report['auditable']} 个"
         )
 
-        print("  前 24 个块的归属：")
+        print("  前24个块的归属：")
         for span in spans[:24]:
             print(
                 f"    {span.label:5} {span.zone:12} 送审={int(span.auditable)} "

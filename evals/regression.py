@@ -1,7 +1,7 @@
 """
-回归比较：判断新版本（Prompt / Workflow / Agent 修改）是否让系统退化。
+回归比较：判断新版本（Prompt / Workflow / Agent修改）是否让系统退化。
 
-规则：新版本在任一维度的平均分比基线下降达到阈值（默认 0.2）即判定退化，
+规则：新版本在任一维度的平均分比基线下降达到阈值（默认0.2）即判定退化，
 命令会返回非零退出码，用于阻断迭代。
 
 用法::
@@ -61,7 +61,7 @@ def compare(
     cand_pass = float(cand_agg.get("review_pass_rate", 0.0))
     pass_delta = round(cand_pass - base_pass, 3)
     if pass_delta <= -threshold:
-        degraded_reasons.append(f"Review 通过率下降 {abs(pass_delta)}（阈值 {threshold}）")
+        degraded_reasons.append(f"Review通过率下降 {abs(pass_delta)}（阈值 {threshold}）")
 
     fingerprint_match = baseline.get("fingerprint") == candidate.get("fingerprint")
 
@@ -105,7 +105,7 @@ def format_report(comparison: dict[str, Any]) -> str:
     )
     pass_rate = comparison["review_pass_rate"]
     lines.append(
-        f"| Review 通过率 | {pass_rate['baseline']} | {pass_rate['candidate']} | {pass_rate['delta']:+} |"
+        f"| Review通过率 | {pass_rate['baseline']} | {pass_rate['candidate']} | {pass_rate['delta']:+} |"
     )
     lines.append("")
     if comparison["degraded"]:
@@ -126,9 +126,9 @@ def write_report(comparison: dict[str, Any], path: str | Path) -> Path:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="评测回归比较（退化检测）")
-    parser.add_argument("baseline", help="基线评测结果 JSON")
-    parser.add_argument("candidate", help="新版本评测结果 JSON")
-    parser.add_argument("--threshold", type=float, default=0.2, help="退化阈值（默认 0.2）")
+    parser.add_argument("baseline", help="基线评测结果JSON")
+    parser.add_argument("candidate", help="新版本评测结果JSON")
+    parser.add_argument("--threshold", type=float, default=0.2, help="退化阈值（默认0.2）")
     parser.add_argument("--output", type=str, default="", help="比较结果保存路径")
     return parser.parse_args(argv)
 

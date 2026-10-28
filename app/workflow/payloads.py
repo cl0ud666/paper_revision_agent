@@ -20,7 +20,7 @@ def normalize_issue_payload(
     rules: list[dict[str, Any]] | None = None,
     turn: int = 1,
 ) -> dict[str, Any]:
-    """规范化问题闸门的输入，并把决定写进 user_rules。"""
+    """规范化问题闸门的输入，并把决定写进user_rules。"""
 
     payload = payload if isinstance(payload, dict) else {}
     updated_findings = [dict(issue) for issue in findings]
@@ -111,7 +111,7 @@ def _public_issue(issue: dict[str, Any]) -> dict[str, Any]:
 
 
 def _excluded_ids(payload: Any, patches: list[dict[str, Any]]) -> list[str]:
-    """解析"剔除哪几条"：支持 excluded_ids / 编号 / none。"""
+    """解析"剔除哪几条"：支持excluded_ids / 编号 / none。"""
 
     data = payload if isinstance(payload, dict) else {}
     if data.get("exclude_all"):
@@ -148,7 +148,7 @@ def normalize_human_payload(payload: Any, findings: list[dict[str, Any]]) -> dic
 
     - approved_issue_ids: [1, 2] / ["all"] / ["none"] / 1 / "1,2"
     - constraints: ["..."] 或 "用分号/换行分隔的字符串"
-    - decision: approve / reject（默认 approve）
+    - decision: approve / reject（默认approve）
     """
 
     all_ids = [issue.get("id") for issue in findings if issue.get("id") is not None]
@@ -199,7 +199,7 @@ def normalize_human_payload(payload: Any, findings: list[dict[str, Any]]) -> dic
 
 
 def _parse_ids(raw_ids: Any, all_ids: list[Any]) -> list[int]:
-    """把各种写法的问题编号统一成 int 列表。"""
+    """把各种写法的问题编号统一成int列表。"""
 
     if raw_ids is None:
         return [int(issue_id) for issue_id in all_ids]
@@ -255,9 +255,9 @@ PATCH_FIELDS = (
 
 def _patch_line(patch: dict[str, Any]) -> str:
     """
-    Revision 报给用户看的格式（批注闸门关闭时由它输出）。
+    Revision报给用户看的格式（批注闸门关闭时由它输出）。
 
-    固定三行——原文 / 准备修改为 / 原因，和 Word 批注保持一致，
+    固定三行——原文 / 准备修改为 / 原因，和Word批注保持一致，
     用户看一遍就知道要改什么、为什么改，不需要再逐条确认。
     """
 
@@ -293,7 +293,7 @@ def normalize_patch_payload(payload: Any, patches: list[dict[str, Any]]) -> dict
     decidable = [patch for patch in patches if patch.get("status") == STATUS_PROPOSED]
     decidable_ids = [str(patch.get("patch_id")) for patch in decidable]
 
-    # 1) 逐条 decisions（最灵活）
+    # 1) 逐条decisions（最灵活）
     decision_map: dict[str, str] = {}
     raw_decisions = payload.get("decisions")
     if isinstance(raw_decisions, dict):

@@ -1,5 +1,5 @@
 """
-文件加载测试：docx / pdf / txt（含 GBK 编码）与错误提示。
+文件加载测试：docx / pdf / txt（含GBK编码）与错误提示。
 """
 
 from __future__ import annotations
@@ -77,7 +77,7 @@ class TestTextLoading(unittest.TestCase):
         self.assertEqual(loaded.warnings, [])
 
     def test_gbk_text_with_warning(self) -> None:
-        """中文 Windows 记事本存的 ANSI(GBK) 文件也要能读，不能整篇乱码。"""
+        """中文Windows记事本存的ANSI(GBK) 文件也要能读，不能整篇乱码。"""
 
         loaded = load_bytes(DOC_TEXT.encode("gbk"), filename="paper.txt")
         self.assertIn("新的方法", loaded.text)
@@ -125,7 +125,7 @@ class TestTextLoading(unittest.TestCase):
 
 class TestDocxLoading(unittest.TestCase):
     def test_omml_formula_is_kept(self) -> None:
-        """Word 公式是 OMML 对象：必须取出来，否则模型会误报"公式缺失"。"""
+        """Word公式是OMML对象：必须取出来，否则模型会误报"公式缺失"。"""
 
         try:
             from docx import Document
@@ -179,7 +179,7 @@ class TestDocxLoading(unittest.TestCase):
         self.assertIn("# 论文标题", loaded.text)  # 标题层级被保留
         self.assertIn("## 摘要", loaded.text)
         self.assertIn("新的方法", loaded.text)
-        self.assertIn("| 方法 | 准确率 |", loaded.text)  # 表格转成 Markdown
+        self.assertIn("| 方法 | 准确率 |", loaded.text)  # 表格转成Markdown
         self.assertIn("85.2", loaded.text)
 
     def test_docx_stdlib_fallback(self) -> None:
@@ -191,7 +191,7 @@ class TestDocxLoading(unittest.TestCase):
         self.assertIn("- 要点一", text)
 
     def test_extracted_docx_becomes_addressable_spans(self) -> None:
-        """docx 解析出来的结构，要被段落解析器识别成带 ID 的块。"""
+        """docx解析出来的结构，要被段落解析器识别成带ID的块。"""
 
         from app.document.spans import build_spans
 
@@ -216,11 +216,11 @@ class TestDocxLoading(unittest.TestCase):
 
 class TestPdfLoading(unittest.TestCase):
     def test_blank_pdf_gives_actionable_error(self) -> None:
-        """扫描版/空白 PDF 要给出可执行的提示，而不是含糊的崩溃。"""
+        """扫描版/空白PDF要给出可执行的提示，而不是含糊的崩溃。"""
 
         try:
             from pypdf import PdfWriter
-        except ImportError:  # pragma: no cover - 没装 pypdf 就跳过
+        except ImportError:  # pragma: no cover - 没装pypdf就跳过
             self.skipTest("未安装 pypdf")
 
         buffer = io.BytesIO()
@@ -234,7 +234,7 @@ class TestPdfLoading(unittest.TestCase):
         self.assertTrue("OCR" in message or "docx" in message)
 
     def test_pdf_with_text_is_loaded(self) -> None:
-        """用打桩的方式验证 PDF 流程接线（真实 PDF 由用户环境解析）。"""
+        """用打桩的方式验证PDF流程接线（真实PDF由用户环境解析）。"""
 
         import app.utils.loaders as loaders
 
